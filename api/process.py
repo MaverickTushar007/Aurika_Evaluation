@@ -37,9 +37,7 @@ def process_video(job_id, video_path, venue_id="default"):
         frame_id = 0
 
         DB = sqlite3.connect('db/customer_intel.db')
-        DB.execute("DELETE FROM wait_metrics")
-        DB.execute("DELETE FROM persons")
-        DB.commit()
+        # Using new schema without truncating tables
 
         token_entry = {}
 
@@ -62,31 +60,30 @@ def process_video(job_id, video_path, venue_id="default"):
                     if is_new:
                         token_entry[token] = ts
                         DB.execute(
-                            "INSERT OR IGNORE INTO persons (token_id, first_seen, camera_id) VALUES (?,?,?)",
-                            (token, video_ts_to_iso(ts), 'cam_01'))
+                            "INSERT OR IGNORE INTO temporal_sessions (session_id, camera_id, start_time) VALUES (?,?,?)",
+                            (token, 'cam_01', video_ts_to_iso(ts)))
                         DB.commit()
 
                 for token, entry_ts, exit_ts in tracker.get_exited(frame_id):
-                    wait = exit_ts - entry_ts
-                    if wait > 2:
-                        date = VIDEO_START.strftime('%Y-%m-%d')
-                        DB.execute(
-                            "INSERT INTO wait_metrics (token_id, entry_time, exit_time, wait_seconds, abandoned, date) VALUES (?,?,?,?,?,?)",
-                            (token, video_ts_to_iso(entry_ts), video_ts_to_iso(exit_ts), round(wait, 2), 1, date))
-                        DB.execute(
-                            "UPDATE persons SET last_seen=?, abandoned=1 WHERE token_id=?",
-                            (video_ts_to_iso(exit_ts), token))
+                    duration = exit_ts - entry_ts
+                    if duration > 2:
+                        end_iso = video_ts_to_iso(exit_ts)
+                        DB.execute("UPDATE temporal_sessions SET end_time=?, duration_seconds=? WHERE session_id=?", 
+                                   (end_iso, round(duration, 2), token))
+                        DB.execute("INSERT INTO business_events (session_id, event_type, timestamp, value) VALUES (?,?,?,?)",
+                                   (token, 'abandoned', end_iso, round(duration, 2)))
                         DB.commit()
 
             frame_id += 1
 
         for token, entry_ts, exit_ts in tracker.flush_all():
-            wait = exit_ts - entry_ts
-            if wait > 2:
-                date = VIDEO_START.strftime('%Y-%m-%d')
-                DB.execute(
-                    "INSERT INTO wait_metrics (token_id, entry_time, exit_time, wait_seconds, abandoned, date) VALUES (?,?,?,?,?,?)",
-                    (token, video_ts_to_iso(entry_ts), video_ts_to_iso(exit_ts), round(wait, 2), 1, date))
+            duration = exit_ts - entry_ts
+            if duration > 2:
+                end_iso = video_ts_to_iso(exit_ts)
+                DB.execute("UPDATE temporal_sessions SET end_time=?, duration_seconds=? WHERE session_id=?", 
+                           (end_iso, round(duration, 2), token))
+                DB.execute("INSERT INTO business_events (session_id, event_type, timestamp, value) VALUES (?,?,?,?)",
+                           (token, 'abandoned', end_iso, round(duration, 2)))
                 DB.commit()
 
         cap.release()
