@@ -16,22 +16,7 @@ const PRESET_QUESTIONS = [
   "What percentage of visitors were served today?",
 ];
 
-function KPICard({ icon, label, value, detail, color = "#f59e0b" }) {
-  return (
-    <div style={{
-      background: "#111827", border: "1px solid #1f2937",
-      borderRadius: 16, padding: "24px 28px", flex: 1, minWidth: 180,
-      borderTop: `3px solid ${color}`
-    }}>
-      <div style={{ fontSize: 22, marginBottom: 8 }}>{icon}</div>
-      <div style={{ color: "#6b7280", fontSize: 12, fontWeight: 600,
-        textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{label}</div>
-      <div style={{ color: "#f9fafb", fontSize: 32, fontWeight: 800,
-        lineHeight: 1, marginBottom: 6 }}>{value}</div>
-      {detail && <div style={{ color: "#4b5563", fontSize: 12 }}>{detail}</div>}
-    </div>
-  );
-}
+
 
 function dwellLabel(s) {
   if (!s) return "—";
@@ -292,14 +277,13 @@ function DashboardScreen({ onReset }) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState(null);
+
   const [ratings, setRatings] = useState({});
   const [hoveredCard, setHoveredCard] = useState(null);
 
   const fetchData = (venueId = selectedVenue) => {
     axios.get(`${API}/metrics/summary`).then(r => {
       setSummary(r.data);
-      setLastUpdated(new Date().toLocaleTimeString());
     }).catch(() => {});
     axios.get(`${API}/metrics/persons`).then(r => setPersons(r.data)).catch(() => {});
     axios.get(`${API}/metrics/hourly`).then(r => setHourly(r.data)).catch(() => {});
