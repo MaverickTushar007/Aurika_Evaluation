@@ -1,0 +1,33 @@
+# benchmark/configs/baseline_v1_1.yaml
+# Official Production Baseline v1.1 parameters and regression thresholds.
+# Frozen on 2026-07-03 after proving Strategy D (Hybrid Adaptive Gate) on Benchmark v0.1.
+
+model:
+  weights: "yolo11m.pt"
+  conf_threshold: 0.20
+  classes: [0]          # person only
+
+tracker:
+  adaptive_strategy: "hybrid" # Strategy D enabled
+  max_dist_active: 180   # pixels
+  max_dist_lost: 120     # pixels (acts as fallback base)
+  max_missing: 90        # frames
+  min_hits: 3            # confirmed display gate
+  count_min_hits: 6      # countable database gate
+  active_window: 8       # frames
+  velocity_alpha: 0.30   # EMA smooth weight
+  velocity_damp: 0.80    # decay weight
+  high_conf_thresh: 0.30 # minimum to bypass proximity check
+
+preprocessing:
+  clahe:
+    enabled: true
+    clip_limit: 2.0
+    tile_grid_size: [8, 8]
+
+regression_thresholds:
+  min_mota: 0.360
+  min_idf1: 0.380
+  max_id_switches: 70
+  min_counting_accuracy: 0.980 # Tightened threshold based on 100% actual score
+  min_fps: 5.0

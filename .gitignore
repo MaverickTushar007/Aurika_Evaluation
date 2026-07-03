@@ -9,6 +9,7 @@ __pycache__/
 dist/
 build/
 *.so
+.pytest_cache/
 
 # Virtual environment
 venv/
@@ -72,3 +73,10 @@ runs/
 data/
 detection/
 *.zip
+
+# Restaurant Analytics Pipeline Outputs and Data
+dataset/raw/
+dataset/processed/
+outputs/
+monitoring/reports/
+*.csv

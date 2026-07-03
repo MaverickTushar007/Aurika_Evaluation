@@ -1,209 +1,315 @@
+"""
+run_dark_test.py — Production tracking pipeline for Dark_lighting.mp4
+======================================================================
+Uses the clean v6-restored ByteTracker for precise person tracking.
+
+Usage
+-----
+    ./venv/bin/python run_dark_test.py [--debug] [--log-diagnostics]
+
+Flags
+-----
+  --debug            : Overlay track hits & confidence on bounding boxes.
+  --log-diagnostics  : Write per-frame diagnostic JSON to pipeline_diag_<ts>.json
+  --video            : Path to input video (default: Dark_lighting.mp4)
+  --output           : Path to output video (default: output_dark_lighting.mp4)
+  --conf             : YOLO detection confidence threshold (default: 0.25)
+  --fps-target       : Target FPS for frame sampling (default: 8)
+"""
+
+import argparse
+import json
+import time
+import sys
+
 import cv2
 import numpy as np
-import os
 import torch
 from ultralytics import YOLO
+
 from ingestion.frame_sampler import stream_frames
+from byte_tracker import ByteTracker
 
-# Sequential Tracker for clean sequential IDs (#1, #2, #3...)
-class SequentialPositionTracker:
-    def __init__(self, max_distance=150, max_missing_frames=150):
-        self.tracks = {}
-        self.max_distance = max_distance
-        self.max_missing_frames = max_missing_frames
-        self.next_id = 1
-
-    def _centroid(self, bbox):
-        x1, y1, x2, y2 = bbox
-        return ((x1+x2)/2, (y1+y2)/2)
-
-    def update(self, detections, frame_id, ts):
-        results = []
-        matched_tokens = set()
-
-        for bbox in detections:
-            centroid = self._centroid(bbox)
-            best_token, best_dist = None, float('inf')
-
-            for token, track in self.tracks.items():
-                if token in matched_tokens:
-                    continue
-                dist = np.sqrt(
-                    (centroid[0]-track['centroid'][0])**2 +
-                    (centroid[1]-track['centroid'][1])**2
-                )
-                if dist < best_dist:
-                    best_dist = dist
-                    best_token = token
-
-            if best_token and best_dist < self.max_distance:
-                self.tracks[best_token].update({
-                    'centroid': centroid, 'bbox': bbox,
-                    'last_frame': frame_id, 'last_ts': ts
-                })
-                matched_tokens.add(best_token)
-                results.append((best_token, bbox, False))
-            else:
-                token = self.next_id
-                self.next_id += 1
-                self.tracks[token] = {
-                    'centroid': centroid, 'bbox': bbox,
-                    'last_frame': frame_id, 'entry_ts': ts,
-                    'last_ts': ts
-                }
-                matched_tokens.add(token)
-                results.append((token, bbox, True))
-
-        return results
-
-    def get_exited(self, frame_id):
-        exited = []
-        for token, track in list(self.tracks.items()):
-            if (frame_id - track['last_frame']) > self.max_missing_frames:
-                exited.append((token, track['entry_ts'], track['last_ts']))
-                del self.tracks[token]
-        return exited
-
-    def flush_all(self):
-        return [(t, tr['entry_ts'], tr['last_ts']) for t, tr in self.tracks.items()]
+# ──────────────────────────────────────────────────────────────────────────────
+# Visual constants
+# ──────────────────────────────────────────────────────────────────────────────
+COLOR_GUEST_CONFIRMED = (0, 165, 255)   # Orange – confirmed guest
+COLOR_GUEST_TENTATIVE = (60, 100, 180)  # Muted blue-grey – tentative
+COLOR_STAFF_CONFIRMED = (0, 220, 0)     # Green – confirmed staff
+COLOR_STAFF_TENTATIVE = (0, 130, 0)     # Dim green – tentative
+COLOR_TEXT            = (255, 255, 255)
+COLOR_BG_STATS        = (20, 20, 20)
 
 
-# Colors for drawing
-COLOR_GUEST = (0, 165, 255)  # Orange/amber for guests
-COLOR_STAFF = (0, 255, 0)    # Green for staff
-COLOR_TEXT = (255, 255, 255)
-COLOR_BG_STATS = (30, 30, 30)
+def pick_color(role, confirmed):
+    if role == "staff":
+        return COLOR_STAFF_CONFIRMED if confirmed else COLOR_STAFF_TENTATIVE
+    return COLOR_GUEST_CONFIRMED if confirmed else COLOR_GUEST_TENTATIVE
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# NMS helper – remove duplicate / overlapping detections before tracking
+# ──────────────────────────────────────────────────────────────────────────────
+def apply_nms(bboxes, confs, iou_threshold=0.50):
+    """Greedy NMS. Returns kept indices sorted by confidence (high → low)."""
+    if not bboxes:
+        return []
+    order = sorted(range(len(confs)), key=lambda i: confs[i], reverse=True)
+    kept = []
+    while order:
+        i = order.pop(0)
+        kept.append(i)
+        suppress = []
+        for j in order:
+            a, b = bboxes[i], bboxes[j]
+            ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+            ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+            inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+            if inter > 0:
+                area_a = (a[2]-a[0]) * (a[3]-a[1])
+                area_b = (b[2]-b[0]) * (b[3]-b[1])
+                iou = inter / (area_a + area_b - inter + 1e-9)
+                if iou > iou_threshold:
+                    suppress.append(j)
+        order = [x for x in order if x not in suppress]
+    return kept
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Main pipeline
+# ──────────────────────────────────────────────────────────────────────────────
 def main():
-    video_path = "Dark_lighting.mp4"
-    output_path = "output_dark_lighting.mp4"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug",           action="store_true",
+                        help="Overlay hits & confidence on bounding boxes")
+    parser.add_argument("--log-diagnostics", action="store_true",
+                        help="Write per-frame JSON diagnostics")
+    parser.add_argument("--video",           default="Dark_lighting.mp4")
+    parser.add_argument("--output",          default="output_dark_lighting.mp4")
+    parser.add_argument("--model",           default="yolo11m.pt",
+                        help="YOLO model weights file")
+    parser.add_argument("--conf",            type=float, default=0.20,
+                        help="YOLO detection confidence threshold")
+    parser.add_argument("--fps-target",      type=int,   default=8)
+    args = parser.parse_args()
 
-    print("Loading YOLO model...")
-    # Load custom staff/customer classifier YOLO model
-    detector = YOLO('yolo_staff_customer.pt')
-    
-    # Select best available device
+    video_path  = args.video
+    output_path = args.output
+
+    # ── Device ────────────────────────────────────────────────────────────────
     if torch.cuda.is_available():
         device = "cuda"
     elif torch.backends.mps.is_available():
         device = "mps"
     else:
         device = "cpu"
-    print(f"Using device: {device}")
+    print(f"[init] Device: {device}")
 
-    # Initialize Sequential Tracker
-    tracker = SequentialPositionTracker(max_distance=180, max_missing_frames=120)
-    
-    # We will keep track of class votes for each tracking ID
-    # 0 = customer/guest, 1 = staff
-    token_class_votes = {}
-    token_final_class = {}
+    # ── Model ─────────────────────────────────────────────────────────────────
+    print(f"[init] Loading {args.model} ...")
+    detector = YOLO(args.model)
+    print(f"[init] Model loaded: {args.model}")
 
-    # Cumulative sets to keep track of total unique guests and staff
-    cumulative_guests = set()
-    cumulative_staff = set()
+    # ── Tracker ───────────────────────────────────────────────────────────────
+    # v6-restored: sensible defaults tuned for dark CCTV footage at 8fps.
+    tracker = ByteTracker(
+        max_dist_active=180,    # ~3 seat-widths; enough for normal motion
+        max_dist_lost=120,      # tighter re-link for lost tracks
+        max_missing=90,         # ~11s gap bridge at 8fps (not 60s!)
+        min_hits=3,             # show track on screen after 3 detections
+        count_min_hits=6,       # count toward totals after 6 detections
+        active_window=8,        # frames before a track moves to 'lost'
+        velocity_alpha=0.30,    # gentle velocity smoothing
+        velocity_damp=0.80,     # velocity fades when track goes missing
+        high_conf_thresh=0.30,  # lower for dark footage (yolo11m clusters 0.20-0.45)
+        iou_thresh_active=0.15,
+        iou_thresh_lost=0.10,
+    )
 
-    writer = None
+    # ── State ─────────────────────────────────────────────────────────────────
+    token_final_class  = {}   # track_id -> "guest" | "staff"
+    cumulative_guests  = set()
+    cumulative_staff   = set()
+
+    # Service zone coordinates (scaled for 1920x1080 Dark_lighting.mp4)
+    # Staff tend to occupy this zone behind the service counter.
+    SERVICE_ZONE = (540.0, 270.0, 723.0, 540.0)   # (x_min, y_min, x_max, y_max)
+    MOTION_RATIO_STAFF = 0.18     # staff have >=18% of displacements > 25px
+    MOTION_MIN_FRAMES  = 15       # need >=15 frames before classifying by motion
+
+    diag_frames = [] if args.log_diagnostics else None
+
+    writer      = None
     frame_count = 0
-    fps_target = 8
+    t_start     = time.time()
 
-    print(f"Processing {video_path}...")
-    for fid, ts, frame in stream_frames(video_path, fps_target=fps_target):
+    print(f"[run ] Processing {video_path} at {args.fps_target} fps_target ...")
+    for fid, ts, frame in stream_frames(video_path, fps_target=args.fps_target):
+
+        # ── Video writer init ──────────────────────────────────────────────
         if writer is None:
             h, w = frame.shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            writer = cv2.VideoWriter(output_path, fourcc, fps_target, (w, h))
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(output_path, fourcc, args.fps_target, (w, h))
 
-        # Detect
-        results = detector(frame, conf=0.25, verbose=False, device=device)
-        bboxes = []
-        box_classes = []
-        box_confidences = []
-        for box in results[0].boxes:
-            bboxes.append(box.xyxy[0].tolist())
-            box_classes.append(int(box.cls[0]))
-            box_confidences.append(float(box.conf[0]))
+        # ── Detection ─────────────────────────────────────────────────────
+        # classes=[0] filters to COCO person class only (no chairs/bottles)
+        yolo_results = detector(frame, conf=args.conf, verbose=False,
+                                device=device, classes=[0])
+        raw_bboxes = []
+        raw_confs  = []
 
-        # Update tracker
-        tracks = tracker.update(bboxes, fid, ts)
+        for box in yolo_results[0].boxes:
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            conf = float(box.conf[0])
+            # Skip bboxes too small to be a real person
+            if (y2 - y1) < 25:
+                continue
+            raw_bboxes.append([x1, y1, x2, y2])
+            raw_confs.append(conf)
 
-        # Clean up exited tracks from the active tracker to prevent ID hijacking by new detections
-        tracker.get_exited(fid)
+        # ── NMS (remove overlapping duplicates) ────────────────────────────
+        kept   = apply_nms(raw_bboxes, raw_confs, iou_threshold=0.50)
+        bboxes = [raw_bboxes[i] for i in kept]
+        confs  = [raw_confs[i]  for i in kept]
 
-        # Class vote update
-        for i, (token, bbox, is_new) in enumerate(tracks):
-            cls = box_classes[i]
-            token_class_votes.setdefault(token, []).append(cls)
-            votes = token_class_votes[token]
-            
-            # Majority vote
-            is_staff = (votes.count(1) > votes.count(0))
-            token_final_class[token] = "staff" if is_staff else "guest"
+        # Build detection format expected by ByteTracker: [x1,y1,x2,y2,conf]
+        detections = [[*bboxes[i], confs[i]] for i in range(len(bboxes))]
 
-            if is_staff:
-                cumulative_staff.add(token)
-                # If they were previously in cumulative_guests, remove them to avoid double counting
-                cumulative_guests.discard(token)
-            else:
-                if token not in cumulative_staff:
-                    cumulative_guests.add(token)
+        # ── Tracking ──────────────────────────────────────────────────────
+        log_lines    = [] if args.log_diagnostics else None
+        track_results = tracker.update(detections, fid, ts, log_lines=log_lines)
+        # track_results: list of (track_id, bbox, conf, confirmed, countable)
 
-        # Draw overlays
-        for token, bbox, is_new in tracks:
-            role = token_final_class.get(token, "guest")
-            x1, y1, x2, y2 = [int(v) for v in bbox]
+        # ── Motion-based staff/guest classification ─────────────────────────
+        # Uses displacement history to separate staff (high motion / service zone)
+        # from guests (seated, low motion).
+        for (tid, t_bbox, t_conf, confirmed, countable) in track_results:
+            tr = tracker.tracks.get(tid)
+            if tr is None:
+                continue
+            history = tr["history"]
+            role = "guest"  # default
 
-            # Label format: #1guest or #6staff
-            label_text = f"#{token}{role}"
-            color = COLOR_STAFF if role == "staff" else COLOR_GUEST
+            if len(history) >= MOTION_MIN_FRAMES:
+                # Compute frame-to-frame displacements
+                pts = np.array(history)
+                disps = np.sqrt(np.sum(np.diff(pts, axis=0) ** 2, axis=1))
+                high_motion_ratio = np.mean(disps > 25.0)
 
-            # Draw bounding box
+                if high_motion_ratio >= MOTION_RATIO_STAFF:
+                    role = "staff"
+                else:
+                    # Check if mean position is in the service zone
+                    mean_x, mean_y = pts[:, 0].mean(), pts[:, 1].mean()
+                    sx1, sy1, sx2, sy2 = SERVICE_ZONE
+                    if sx1 <= mean_x <= sx2 and sy1 <= mean_y <= sy2:
+                        role = "staff"
+
+            token_final_class[tid] = role
+
+            # Only count tracks that have been seen enough times (countable flag)
+            if countable:
+                if role == "staff":
+                    cumulative_staff.add(tid)
+                    cumulative_guests.discard(tid)
+                else:
+                    if tid not in cumulative_staff:
+                        cumulative_guests.add(tid)
+
+        # ── Drawing ───────────────────────────────────────────────────────
+        for (tid, t_bbox, t_conf, confirmed, countable) in track_results:
+            # Only draw confirmed tracks to avoid cluttering screen with ghosts
+            if not confirmed:
+                continue
+
+            role  = token_final_class.get(tid, "guest")
+            color = pick_color(role, confirmed)
+            x1, y1, x2, y2 = [int(v) for v in t_bbox]
+
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            
-            # Draw label background
-            (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            cv2.rectangle(frame, (x1, max(y1 - 20, 0)), (x1 + tw + 6, max(y1 - 2, 0)), color, -1)
-            # Draw label text
-            cv2.putText(frame, label_text, (x1 + 3, max(y1 - 6, 12)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
-        # Draw beautiful dashboard overlay on top-left of the screen
-        # Height: 100, Width: 410
-        cv2.rectangle(frame, (10, 10), (420, 110), COLOR_BG_STATS, -1)
-        cv2.rectangle(frame, (10, 10), (420, 110), (100, 100, 100), 2)
-        
-        # Calculate counts
-        # Covers = Total unique guests seen so far
-        # Staff = Total unique staff seen so far
+            if args.debug:
+                tr    = tracker.tracks.get(tid)
+                hits  = tr["hits"] if tr else 0
+                label = f"#{tid} {role[0].upper()} h={hits} c={t_conf:.2f}"
+            else:
+                label = f"#{tid} {role}"
+
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            cv2.rectangle(frame,
+                          (x1, max(y1 - 18, 0)),
+                          (x1 + tw + 4, max(y1 - 2, 0)),
+                          color, -1)
+            cv2.putText(frame, label,
+                        (x1 + 2, max(y1 - 5, 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+
+        # ── Dashboard overlay ──────────────────────────────────────────────
         n_covers = len(cumulative_guests)
-        n_staff = len(cumulative_staff)
-        
-        # Current active in frame
-        active_guests = sum(1 for token, _, _ in tracks if token_final_class.get(token) == "guest")
-        active_staff = sum(1 for token, _, _ in tracks if token_final_class.get(token) == "staff")
+        n_staff  = len(cumulative_staff)
+        active_g = sum(1 for (tid, *rest) in track_results
+                       if token_final_class.get(tid) == "guest" and rest[2])  # confirmed
+        active_s = sum(1 for (tid, *rest) in track_results
+                       if token_final_class.get(tid) == "staff" and rest[2])  # confirmed
 
-        # Texts
-        title_text = "CUSTOMER INTELLIGENCE LIVE SCAN"
-        time_text = f"Video Time: {ts:.1f}s | Frame: {fid}"
-        counts_text1 = f"Covers (Guests): {n_covers}  |  Staff: {n_staff}"
-        counts_text2 = f"Active in Frame: {active_guests} Guest(s), {active_staff} Staff"
+        dash_x1, dash_y1, dash_x2, dash_y2 = 10, 10, 430, 115
+        cv2.rectangle(frame, (dash_x1, dash_y1), (dash_x2, dash_y2), COLOR_BG_STATS, -1)
+        cv2.rectangle(frame, (dash_x1, dash_y1), (dash_x2, dash_y2), (80, 80, 80), 1)
 
-        cv2.putText(frame, title_text, (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 1, cv2.LINE_AA)
-        cv2.putText(frame, counts_text1, (20, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(frame, counts_text2, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1, cv2.LINE_AA)
-        cv2.putText(frame, time_text, (20, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 150, 150), 1, cv2.LINE_AA)
+        cv2.putText(frame, "CUSTOMER INTELLIGENCE LIVE SCAN",
+                    (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 200, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"Covers (Guests): {n_covers}  |  Staff: {n_staff}",
+                    (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.58, COLOR_TEXT, 2, cv2.LINE_AA)
+        cv2.putText(frame, f"Active in Frame: {active_g} Guest(s), {active_s} Staff",
+                    (20, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 200), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"Video Time: {ts:.1f}s | Frame: {fid} | Tracks: {len(tracker.tracks)}",
+                    (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (130, 130, 130), 1, cv2.LINE_AA)
 
-        # Write frame to video
+        # ── Diagnostics ────────────────────────────────────────────────────
+        if diag_frames is not None:
+            diag_frames.append({
+                "frame_id":       fid,
+                "ts":             round(ts, 3),
+                "n_raw_det":      len(raw_bboxes),
+                "n_det_post_nms": len(bboxes),
+                "confs":          [round(c, 3) for c in confs],
+                "n_tracks":       len(track_results),
+                "n_active_tracker": tracker.get_active_count(),
+                "log":            log_lines or [],
+            })
+
         writer.write(frame)
         frame_count += 1
-        
-        if frame_count % 100 == 0:
-            print(f"Processed {frame_count} frames... {ts:.1f}s. Covers: {n_covers}, Staff: {n_staff}")
 
-    if writer is not None:
+        if frame_count % 50 == 0:
+            elapsed     = time.time() - t_start
+            fps_actual  = frame_count / elapsed
+            print(
+                f"[{ts:6.1f}s | fid={fid:5d}] "
+                f"dets={len(bboxes):2d} tracks={len(track_results):2d} "
+                f"active={tracker.get_active_count():3d} "
+                f"covers={n_covers} staff={n_staff} "
+                f"({fps_actual:.1f} fps)"
+            )
+
+    # ── Finalise ───────────────────────────────────────────────────────────
+    if writer:
         writer.release()
-    print(f"Successfully processed {frame_count} frames. Output saved to {output_path}")
-    print(f"Final cumulative counts -> Covers (Guests): {len(cumulative_guests)}, Staff: {len(cumulative_staff)}")
+
+    elapsed = time.time() - t_start
+    print(f"\n[done] {frame_count} frames processed in {elapsed:.1f}s "
+          f"({frame_count/elapsed:.1f} fps avg)")
+    print(f"[done] Output: {output_path}")
+    print(f"[done] Final -> Covers (Guests): {len(cumulative_guests)} | Staff: {len(cumulative_staff)}")
+    print(f"[done] Total unique track IDs ever created: {tracker.next_id - 1}")
+
+    if diag_frames is not None:
+        diag_path = f"pipeline_diag_{int(time.time())}.json"
+        with open(diag_path, "w") as f:
+            json.dump(diag_frames, f, indent=2)
+        print(f"[diag] Diagnostics written to {diag_path}")
+
 
 if __name__ == "__main__":
     main()

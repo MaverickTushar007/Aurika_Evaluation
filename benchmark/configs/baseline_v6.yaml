@@ -1,0 +1,31 @@
+# configs/baseline_v6.yaml
+# Production-frozen baseline parameters for YOLOv11m and ByteTracker (v6-restored)
+
+model:
+  weights: "yolo11m.pt"
+  conf_threshold: 0.20
+  classes: [0]          # person only
+
+tracker:
+  max_dist_active: 180   # pixels
+  max_dist_lost: 120     # pixels
+  max_missing: 90        # frames
+  min_hits: 3            # confirmed display gate
+  count_min_hits: 6      # countable database gate
+  active_window: 8       # frames
+  velocity_alpha: 0.30   # EMA smooth weight
+  velocity_damp: 0.80    # decay weight
+  high_conf_thresh: 0.30 # minimum to bypass proximity check
+
+preprocessing:
+  clahe:
+    enabled: true
+    clip_limit: 2.0
+    tile_grid_size: [8, 8]
+
+regression_thresholds:
+  min_mota: 0.70
+  min_idf1: 0.75
+  max_id_switches: 30
+  min_counting_accuracy: 0.90
+  min_fps: 12.0

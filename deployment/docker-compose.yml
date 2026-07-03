@@ -1,0 +1,18 @@
+# deployment/docker-compose.yml
+version: "3.8"
+
+services:
+  analytics-api:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../configs:/app/configs
+      - ../logs:/app/logs
+      - ../monitoring:/app/monitoring
+    environment:
+      - PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+      - LOG_DIR=/app/logs
+    restart: always

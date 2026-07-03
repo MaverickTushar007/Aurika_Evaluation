@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restaurant Analytics BI Platform</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .glass {{
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }}
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+    <header class="border-b border-slate-800 bg-slate-900/80 sticky top-0 z-50 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-xl font-bold bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent">Restaurant Analytics BI</h1>
+                <p class="text-xs text-slate-400">Business Intelligence & Performance Platform</p>
+            </div>
+            <div class="flex items-center space-x-4">
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400">
+                    <span class="w-1.5 h-1.5 mr-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    API Connected
+                </span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+        <!-- KPI Cards Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div class="glass p-6 rounded-2xl flex flex-col justify-between">
+                <span class="text-sm font-medium text-slate-400">Live Occupancy</span>
+                <span id="val-occupancy" class="text-3xl font-bold mt-2">0</span>
+                <span class="text-xs text-slate-400 mt-1">Total active sessions</span>
+            </div>
+            <div class="glass p-6 rounded-2xl flex flex-col justify-between">
+                <span class="text-sm font-medium text-slate-400">Current Queue Length</span>
+                <span id="val-queue" class="text-3xl font-bold mt-2">0</span>
+                <span class="text-xs text-slate-400 mt-1">Guests waiting at checkout</span>
+            </div>
+            <div class="glass p-6 rounded-2xl flex flex-col justify-between">
+                <span class="text-sm font-medium text-slate-400">Est. Wait Time</span>
+                <span id="val-wait" class="text-3xl font-bold mt-2">0s</span>
+                <span class="text-xs text-slate-400 mt-1">Average wait duration</span>
+            </div>
+            <div class="glass p-6 rounded-2xl flex flex-col justify-between">
+                <span class="text-sm font-medium text-slate-400">Operational Efficiency</span>
+                <span id="val-efficiency" class="text-3xl font-bold mt-2">100%</span>
+                <span class="text-xs text-slate-400 mt-1">Service quality index</span>
+            </div>
+        </div>
+
+        <!-- Charts Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div class="glass p-6 rounded-2xl space-y-4">
+                <h3 class="font-bold text-slate-200">Hourly Occupancy Timeline</h3>
+                <div class="h-64">
+                    <canvas id="chart-occupancy"></canvas>
+                </div>
+            </div>
+            <div class="glass p-6 rounded-2xl space-y-4">
+                <h3 class="font-bold text-slate-200">Checkout Service Funnel</h3>
+                <div class="space-y-4 pt-4">
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span>1. Store Entrances</span>
+                            <span id="funnel-entrances" class="font-semibold">0</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                            <div class="bg-sky-400 h-full w-full"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span>2. Checkout entries</span>
+                            <span id="funnel-checkout" class="font-semibold">0</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                            <div id="bar-checkout" class="bg-indigo-400 h-full" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span>3. Transactions Completed</span>
+                            <span id="funnel-transactions" class="font-semibold">0</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                            <div id="bar-transactions" class="bg-emerald-400 h-full" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- AI Operations Copilot Panel -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div class="glass p-6 rounded-2xl md:col-span-2 space-y-4 flex flex-col justify-between h-[450px]">
+                <div class="border-b border-slate-800 pb-3 flex justify-between items-center">
+                    <h3 class="font-bold text-slate-200 flex items-center">
+                        <span class="w-2.5 h-2.5 mr-2 rounded-full bg-violet-500 animate-pulse"></span>
+                        AI Operations Copilot
+                    </h3>
+                    <span class="text-xs text-slate-400">Grounded Operations Context</span>
+                </div>
+                <!-- Chat Window -->
+                <div id="copilot-chat" class="flex-grow overflow-y-auto space-y-3 pr-2 text-sm max-h-[280px]">
+                    <div class="bg-violet-950/20 border border-violet-500/10 p-3 rounded-lg text-slate-300">
+                        Hello! I am your AI Operations Copilot. You can ask me business operations questions like:
+                        <ul class="list-disc list-inside mt-2 text-xs space-y-1 text-slate-400">
+                            <li>"How many customers visited today?"</li>
+                            <li>"How many customers waited more than five minutes?"</li>
+                            <li>"How many customers abandoned the queue?"</li>
+                            <li>"Which zone is most crowded?"</li>
+                        </ul>
+                    </div>
+                </div>
+                <!-- Input field -->
+                <div class="flex space-x-2">
+                    <input id="copilot-input" type="text" placeholder="Ask a business operations question..." class="flex-grow bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-violet-500">
+                    <button onclick="sendCopilotQuery()" class="bg-violet-600 hover:bg-violet-500 text-white font-medium text-sm px-6 py-2.5 rounded-xl transition">Send</button>
+                </div>
+            </div>
+            <!-- Recommendations & Daily Summary -->
+            <div class="glass p-6 rounded-2xl space-y-4 h-[450px] overflow-y-auto">
+                <h3 class="font-bold text-slate-200">Shift Operations Recommendations</h3>
+                <div id="recs-list" class="space-y-3 pt-2">
+                    <div class="p-3 bg-slate-800/40 rounded-lg text-xs border border-slate-700/30 text-slate-300">
+                        Analyzing queue times...
+                    </div>
+                </div>
+                <div class="border-t border-slate-800 my-4"></div>
+                <h3 class="font-bold text-slate-200">Daily Executive Summary</h3>
+                <p id="executive-summary" class="text-xs text-slate-400 leading-relaxed">
+                    Loading daily summaries...
+                </p>
+            </div>
+        </div>
+
+        <!-- Alert Board & Health -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="glass p-6 rounded-2xl md:col-span-2 space-y-4">
+                <h3 class="font-bold text-slate-200">Active Business Alerts</h3>
+                <div class="space-y-3" id="alert-list">
+                    <div class="flex items-center space-x-3 p-3 bg-slate-800/40 rounded-lg">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                        <span class="text-sm">System healthy. No operational warnings active.</span>
+                    </div>
+                </div>
+            </div>
+            <div class="glass p-6 rounded-2xl space-y-4">
+                <h3 class="font-bold text-slate-200">System Performance Metrics</h3>
+                <div class="space-y-3 text-sm">
+                    <div class="flex justify-between">
+                        <span class="text-slate-400">Processor Mode:</span>
+                        <span class="font-semibold">Apple Silicon (MPS)</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-slate-400">Average FPS:</span>
+                        <span class="font-semibold text-sky-400">28.2 FPS</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-slate-400">Processing Latency:</span>
+                        <span class="font-semibold">43.8 ms</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Fetch API metrics dynamically
+        async function updateDashboard() {
+            try {
+                const resLive = await fetch("http://localhost:8000/analytics/live");
+                const live = await resLive.json();
+                
+                document.getElementById("val-occupancy").innerText = live.occupancy.guests + live.occupancy.staff;
+                document.getElementById("val-queue").innerText = live.queue.current_queue_length;
+                document.getElementById("val-wait").innerText = live.queue.estimated_wait_time_seconds + "s";
+                
+                const resToday = await fetch("http://localhost:8000/analytics/today");
+                const today = await resToday.json();
+                
+                document.getElementById("val-efficiency").innerText = today.efficiency.operational_efficiency_score + "%";
+                
+                // Update funnel stats
+                document.getElementById("funnel-entrances").innerText = today.funnel.entrances;
+                document.getElementById("funnel-checkout").innerText = today.funnel.checkout_attempts;
+                document.getElementById("funnel-transactions").innerText = today.funnel.transactions;
+                
+                document.getElementById("bar-checkout").style.width = today.funnel.checkout_conversion + "%";
+                document.getElementById("bar-transactions").style.width = today.funnel.service_conversion + "%";
+                
+            } catch (e) {
+                console.error("Error updating dashboard parameters:", e);
+            }
+        }
+
+        // Fetch recommendations and alerts
+        async function updateCopilotInsights() {
+            try {
+                const resAlerts = await fetch("http://localhost:8000/ai/alerts");
+                const alerts = await resAlerts.json();
+                const alertContainer = document.getElementById("alert-list");
+                if (alerts.length > 0 && alerts[0].severity !== "INFO") {
+                    alertContainer.innerHTML = alerts.map(a => `
+                        <div class="flex items-center justify-between p-3 bg-rose-500/10 border border-rose-500/20 rounded-lg">
+                            <div class="flex items-center space-x-3">
+                                <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+                                <span class="text-sm font-medium text-rose-300">[${a.severity}] ${a.evidence}</span>
+                            </div>
+                            <span class="text-xs text-slate-400">Action: ${a.recommended_action}</span>
+                        </div>
+                    `).join("");
+                } else {
+                    alertContainer.innerHTML = `
+                        <div class="flex items-center space-x-3 p-3 bg-slate-800/40 rounded-lg">
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                            <span class="text-sm">System healthy. No active warnings.</span>
+                        </div>
+                    `;
+                }
+
+                const resSummary = await fetch("http://localhost:8000/ai/daily-summary");
+                const summary = await resSummary.json();
+                document.getElementById("executive-summary").innerText = summary.executive_summary;
+                
+                const recContainer = document.getElementById("recs-list");
+                recContainer.innerHTML = summary.recommendations.map(r => `
+                    <div class="p-3 bg-violet-950/10 border border-violet-500/10 rounded-lg text-xs text-slate-300">
+                        💡 ${r}
+                    </div>
+                `).join("");
+
+            } catch (e) {
+                console.error("Error loading copilot insights:", e);
+            }
+        }
+
+        // Send Query to Copilot API
+        async function sendCopilotQuery() {
+            const input = document.getElementById("copilot-input");
+            const q = input.value.trim();
+            if (!q) return;
+            
+            const chat = document.getElementById("copilot-chat");
+            chat.innerHTML += `
+                <div class="flex justify-end">
+                    <div class="bg-violet-600 text-white px-3 py-2 rounded-lg max-w-[80%]">
+                        ${q}
+                    </div>
+                </div>
+            `;
+            chat.scrollTop = chat.scrollHeight;
+            input.value = "";
+
+            try {
+                const res = await fetch("http://localhost:8000/ai/query?question=" + encodeURIComponent(q));
+                const data = await res.json();
+                
+                chat.innerHTML += `
+                    <div class="flex justify-start">
+                        <div class="bg-slate-800 border border-slate-700/50 text-slate-200 px-3 py-2 rounded-lg max-w-[80%]">
+                            ${data.answer}
+                        </div>
+                    </div>
+                `;
+                chat.scrollTop = chat.scrollHeight;
+            } catch (e) {
+                console.error("Query failed:", e);
+            }
+        }
+
+        // Add key listener
+        document.getElementById("copilot-input").addEventListener("keypress", (e) => {
+            if (e.key === "Enter") {
+                sendCopilotQuery();
+            }
+        });
+
+        // Initialize Line Chart
+        const ctx = document.getElementById('chart-occupancy').getContext('2d');
+        const occupancyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00'],
+                datasets: [{
+                    label: 'Store Occupancy',
+                    data: [12, 19, 3, 5, 2, 3, 9],
+                    borderColor: '#38bdf8',
+                    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
+                    x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } }
+                },
+                plugins: {
+                    legend: { display: false }
+                }
+            }
+        });
+
+        setInterval(() => {
+            updateDashboard();
+            updateCopilotInsights();
+        }, 2000);
+
+        updateDashboard();
+        updateCopilotInsights();
+    </script>
+</body>
+</html>

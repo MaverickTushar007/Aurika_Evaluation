@@ -1,0 +1,35 @@
+# configs/benchmark.yaml
+project:
+  name: "Restaurant Analytics (Benchmark)"
+  version: "2.0.0"
+
+paths:
+  dataset_dir: "roboflow_filtered"
+  weights_path: "yolo11m.pt"
+  output_dir: "runs/benchmark"
+
+model:
+  conf_threshold: 0.20
+  iou_threshold: 0.45
+  device: "mps"
+  imgsz: 640
+
+tracker:
+  max_dist_active: 180
+  max_dist_lost: 120
+  max_missing: 90
+  min_hits: 3
+  count_min_hits: 6
+  active_window: 8
+  velocity_alpha: 0.30
+  velocity_damp: 0.80
+  high_conf_thresh: 0.30
+  adaptive_strategy: "hybrid"
+
+counting:
+  zone_coords: [[100, 200], [500, 200], [500, 600], [100, 600]]
+  min_time_seconds: 5.0
+
+semantic:
+  staff_zone_threshold: 0.80
+  min_track_length: 15
