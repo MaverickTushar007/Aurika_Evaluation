@@ -1,0 +1,7 @@
+{
+    "zone_transition_confirmation": 3.0,
+    "lost_visit_timeout": 30.0,
+    "appearance_similarity": 0.8,
+    "merge_threshold": 0.85,
+    "metric_smoothing": 0.2
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "visit_id": "gt_01",
+    "guest_id": "guest_1",
+    "entry_time": "2026-07-04T06:00:00Z",
+    "waiting_start": "2026-07-04T06:00:05Z",
+    "waiting_end": "2026-07-04T06:05:00Z",
+    "escort_time": "2026-07-04T06:05:00Z",
+    "dining_start": "2026-07-04T06:05:30Z",
+    "exit_time": "2026-07-04T06:45:00Z",
+    "zone_history": ["Entrance", "Waiting Area", "Dining", "Exit"],
+    "expected_recommendations": []
+  },
+  {
+    "visit_id": "gt_02",
+    "guest_id": "guest_2",
+    "entry_time": "2026-07-04T06:10:00Z",
+    "waiting_start": "2026-07-04T06:10:05Z",
+    "waiting_end": "2026-07-04T06:22:00Z",
+    "escort_time": "2026-07-04T06:22:00Z",
+    "dining_start": "2026-07-04T06:22:30Z",
+    "exit_time": "2026-07-04T07:15:00Z",
+    "zone_history": ["Entrance", "Waiting Area", "Dining"],
+    "expected_recommendations": ["QUEUE_SLA_BREACH"]
+  }
+]

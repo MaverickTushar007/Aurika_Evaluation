@@ -80,3 +80,11 @@ dataset/processed/
 outputs/
 monitoring/reports/
 *.csv
+
+# Additional Phase 2 Ignores
+*.html
+*.tmp
+.cache/
+.ipynb_checkpoints/
+kaggle_package/
+scratch/

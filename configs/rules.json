@@ -1,0 +1,127 @@
+[
+  {
+    "rule_id": "QUEUE_SLA_BREACH",
+    "name": "Guest waiting longer than SLA",
+    "description": "Average wait time exceeds the configured SLA.",
+    "enabled": true,
+    "severity": "CRITICAL",
+    "priority": 1,
+    "conditions": {
+      "metric": "average_wait_time",
+      "operator": ">",
+      "threshold": 300
+    },
+    "recommendation_template": {
+      "action": "Deploy second host or open additional waiting area",
+      "impact": "Reduces queue time and prevents guest abandonment"
+    }
+  },
+  {
+    "rule_id": "QUEUE_THRESHOLD_EXCEEDED",
+    "name": "Queue exceeds threshold",
+    "description": "The number of waiting guests exceeds the comfortable queue limit.",
+    "enabled": true,
+    "severity": "HIGH",
+    "priority": 2,
+    "conditions": {
+      "metric": "current_queue_length",
+      "operator": ">",
+      "threshold": 5
+    },
+    "recommendation_template": {
+      "action": "Prioritize seating next guests and update wait time estimates",
+      "impact": "Improves guest expectations and clears the entryway"
+    }
+  },
+  {
+    "rule_id": "HOST_IDLE_WHILE_WAITING",
+    "name": "Host idle while guests are waiting",
+    "description": "A queue exists but staff utilization is abnormally low.",
+    "enabled": true,
+    "severity": "WARNING",
+    "priority": 3,
+    "conditions": {
+      "metric": "staff_utilization",
+      "operator": "<",
+      "threshold": 50,
+      "secondary_metric": "current_queue_length",
+      "secondary_operator": ">",
+      "secondary_threshold": 0
+    },
+    "recommendation_template": {
+      "action": "Reassign idle host to front desk to process waiting guests",
+      "impact": "Directly reduces queue length without adding staff"
+    }
+  },
+  {
+    "rule_id": "HOST_OVERLOADED",
+    "name": "Host overloaded",
+    "description": "Host utilization is near maximum while guests are waiting.",
+    "enabled": true,
+    "severity": "HIGH",
+    "priority": 3,
+    "conditions": {
+      "metric": "staff_utilization",
+      "operator": ">",
+      "threshold": 90,
+      "secondary_metric": "current_queue_length",
+      "secondary_operator": ">",
+      "secondary_threshold": 0
+    },
+    "recommendation_template": {
+      "action": "Deploy second host or have manager assist front desk",
+      "impact": "Relieves host bottleneck and speeds up seating"
+    }
+  },
+  {
+    "rule_id": "HIGH_OCCUPANCY",
+    "name": "Restaurant occupancy exceeds configured percentage",
+    "description": "The total number of active guests is approaching maximum capacity.",
+    "enabled": true,
+    "severity": "WARNING",
+    "priority": 4,
+    "conditions": {
+      "metric": "current_occupancy",
+      "operator": ">",
+      "threshold": 50
+    },
+    "recommendation_template": {
+      "action": "Prepare kitchen for peak volume and halt new walk-ins if necessary",
+      "impact": "Prevents kitchen overload and maintains service quality"
+    }
+  },
+  {
+    "rule_id": "LOW_CONFIDENCE",
+    "name": "Low system confidence",
+    "description": "Overall tracking and state confidence has dropped below acceptable limits.",
+    "enabled": true,
+    "severity": "CRITICAL",
+    "priority": 5,
+    "conditions": {
+      "metric": "overall_confidence",
+      "operator": "<",
+      "threshold": 0.50
+    },
+    "recommendation_template": {
+      "action": "Verify camera feeds and check for occlusions or lighting issues",
+      "impact": "Restores system reliability and metric accuracy"
+    }
+  },
+  {
+    "rule_id": "HIGH_DIAGNOSTICS",
+    "name": "High diagnostic event rate",
+    "description": "Too many system errors (e.g. illegal transitions) are occurring.",
+    "enabled": true,
+    "severity": "HIGH",
+    "priority": 6,
+    "conditions": {
+      "metric": "diagnostic_count",
+      "operator": ">",
+      "threshold": 3
+    },
+    "recommendation_template": {
+      "action": "Review system diagnostic logs for pipeline misconfigurations",
+      "impact": "Prevents corrupted business state from propagating"
+    }
+  }
+]

@@ -21,6 +21,7 @@ import argparse
 import json
 import time
 import sys
+from datetime import datetime, timedelta
 
 import cv2
 import numpy as np
@@ -29,6 +30,9 @@ from ultralytics import YOLO
 
 from ingestion.frame_sampler import stream_frames
 from byte_tracker import ByteTracker
+from restaurant_analytics.visit_manager import VisitManager
+from restaurant_analytics.zone_mapper import ZoneMapper
+from pipeline_position import load_zones
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Visual constants
@@ -131,6 +135,11 @@ def main():
     cumulative_guests  = set()
     cumulative_staff   = set()
 
+    # Milestone 2 & Phase 2 Integration
+    visit_manager = VisitManager()
+    zone_mapper = ZoneMapper(load_zones())
+    VIDEO_START = datetime.now()
+
     # Service zone coordinates (scaled for 1920x1080 Dark_lighting.mp4)
     # Staff tend to occupy this zone behind the service counter.
     SERVICE_ZONE = (540.0, 270.0, 723.0, 540.0)   # (x_min, y_min, x_max, y_max)
@@ -207,6 +216,17 @@ def main():
                         role = "staff"
 
             token_final_class[tid] = role
+            
+            dt_ts = VIDEO_START + timedelta(seconds=ts)
+            visit = visit_manager.get_visit(tid)
+            if not visit:
+                visit = visit_manager.handle_track_start(tid, dt_ts, role=role, camera_id=video_path)
+            else:
+                visit.update_role(role, dt_ts)
+
+            # Update zone
+            current_z = zone_mapper.get_zone_for_bbox(t_bbox)
+            visit.update_zone(current_z, dt_ts)
 
             # Only count tracks that have been seen enough times (countable flag)
             if countable:
@@ -296,6 +316,9 @@ def main():
     # ── Finalise ───────────────────────────────────────────────────────────
     if writer:
         writer.release()
+        
+    for tid in list(visit_manager.active_visits.keys()):
+        visit_manager.handle_track_end(tid, VIDEO_START + timedelta(seconds=elapsed if 'elapsed' in locals() else 0))
 
     elapsed = time.time() - t_start
     print(f"\n[done] {frame_count} frames processed in {elapsed:.1f}s "
