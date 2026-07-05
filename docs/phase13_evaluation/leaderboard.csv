@@ -1,0 +1,2 @@
+Dataset,Task,Detection (mAP),Tracking (HOTA),Business KPI Accuracy,Overall Score,Latency (ms),FPS,Status,Version,Date
+PersonPath22,Tracking,Pending,Pending,N/A,Pending,Pending,Pending,Awaiting Run,v1.0,2026-07-04

@@ -6,25 +6,31 @@ import uuid
 
 from restaurant_analytics.persistence_adapter import PersistenceAdapter
 
+# Phase 5: Identity Memory Engine Integration
+from identity_memory.identity_store import IdentityStore
+from identity_memory.memory_manager import MemoryManager
+
+
 class EventType(Enum):
-    GuestEntered = "GuestEntered"
-    GuestExited = "GuestExited"
-    ZoneEntered = "enter_zone"   # Keeps DB backward compatibility
-    ZoneExited = "exit_zone"     # Keeps DB backward compatibility
+    GuestEntered = "entered"
+    GuestExited = "exited"
+    ZoneEntered = "enter_zone"
+    ZoneExited = "exit_zone"
     Served = "served"
     Abandoned = "abandoned"
     StaffShift = "staff_shift"
-    WaitingStarted = "WaitingStarted"
+    WaitingStarted = "waiting"
     WaitingEnded = "WaitingEnded"
     GreetingStarted = "GreetingStarted"
     GreetingEnded = "GreetingEnded"
     Escorted = "Escorted"
-    DiningStarted = "DiningStarted"
+    DiningStarted = "seated"
     DiningEnded = "DiningEnded"
     TableAssigned = "TableAssigned"
     HostIdle = "HostIdle"
     QueueStarted = "QueueStarted"
     QueueEnded = "QueueEnded"
+    LeftTable = "left_table"
 
 @dataclass
 class BusinessEvent:
@@ -59,6 +65,10 @@ class EventEngine:
     def __init__(self, persistence_adapter: Optional[PersistenceAdapter] = None):
         self.persistence = persistence_adapter or PersistenceAdapter()
         self.recent_events_cache = {}  # (visit_id, event_type) -> datetime
+        
+        # IME Subsystem
+        self.identity_store = IdentityStore()
+        self.memory_manager = MemoryManager(self.identity_store)
         
     def publish(self, event: BusinessEvent) -> Optional[BusinessEvent]:
         """Core publishing method that delegates to Persistence Adapter and deduplicates."""
@@ -105,17 +115,18 @@ class EventEngine:
             )
             pub = self.publish(event)
             if pub: events.append(pub)
+            
+        # Route to IME
+        if to_zone:
+            self.memory_manager.process_zone_change(track_id, to_zone, timestamp)
+            
         return events
 
     def publish_visit_created(self, visit_id: str, person_id: str, track_id: str, timestamp: datetime, camera: str, role: str) -> Optional[BusinessEvent]:
         """Emitted when a new Visit entity is instantiated."""
         if role == "guest":
-            event = BusinessEvent(
-                visit_id=visit_id, person_id=person_id, track_id=track_id,
-                event_type=EventType.GuestEntered, timestamp=timestamp,
-                camera=camera
-            )
-            return self.publish(event)
+            # Route to IME
+            self.memory_manager.process_new_track(track_id, camera, "Entrance", timestamp)
         return None
             
     def publish_visit_closed(self, visit_id: str, person_id: str, track_id: str, timestamp: datetime, camera: str, role: str, duration: float, served: bool = False) -> List[BusinessEvent]:
@@ -123,29 +134,19 @@ class EventEngine:
         events = []
         if role == "staff":
             event_type = EventType.StaffShift
-        else:
-            event_type = EventType.Served if served else EventType.Abandoned
-            
-        event = BusinessEvent(
-            visit_id=visit_id, person_id=person_id, track_id=track_id,
-            event_type=event_type, timestamp=timestamp,
-            camera=camera, metadata={"duration": duration}
-        )
-        pub = self.publish(event)
-        if pub: events.append(pub)
-        
-        # Also emit GuestExited explicitly if needed, but for legacy compatibility we prioritize Served/Abandoned
-        if role == "guest":
-            guest_event = BusinessEvent(
+            event = BusinessEvent(
                 visit_id=visit_id, person_id=person_id, track_id=track_id,
-                event_type=EventType.GuestExited, timestamp=timestamp,
+                event_type=event_type, timestamp=timestamp,
                 camera=camera, metadata={"duration": duration}
             )
-            pub = self.publish(guest_event)
+            pub = self.publish(event)
             if pub: events.append(pub)
-            
         return events
             
     def publish_state_change(self, visit_id: str, person_id: str, track_id: str, timestamp: datetime, camera: str, from_state: str, to_state: str) -> Optional[BusinessEvent]:
-        """Reserved for Phase 5 (State Machine) integration."""
-        pass
+        """Integrated with Phase 5 State Machine via Zone Changes implicitly, but allows explicit override."""
+        person = self.identity_store.find_person_by_track(track_id)
+        if person:
+            person.current_state = to_state
+            person.historical_states.append(from_state)
+            person.timeline.record_event("ExplicitStateOverride", timestamp, {"from": from_state, "to": to_state})

@@ -1,0 +1,5 @@
+Dataset,Category,Location,Downloaded,Extracted,Annotations,License,Official Paper,GitHub,Status,Priority,Used by Aurika,Evaluation Ready
+Ai Smart Restaurant,Tracking/Surveillance,/Users/tusharbhatt/Desktop/Aurika-Evaluation/datasets/restaurants,Yes,Yes,Unknown,Unknown,N/A,N/A,Needs Review,Medium,Pending,No
+Roboflow,Tracking/Surveillance,/Users/tusharbhatt/Desktop/Aurika-Evaluation/datasets/restaurants/AI Smart Restaurant Surveillance.v10-final-split-version.yolov11,Yes,Yes,Unknown,Unknown,N/A,N/A,Needs Review,Medium,Pending,No
+Virat,Tracking/Surveillance,/Users/tusharbhatt/Desktop/Aurika-Evaluation/datasets/surveillance/VIRAT,Yes,Yes,Unknown,Unknown,N/A,N/A,Needs Review,Medium,Pending,No
+Personpath22,Tracking/Surveillance,/Users/tusharbhatt/Desktop/Aurika-Evaluation/datasets/surveillance/PersonPath22,Yes,Yes,Unknown,Unknown,N/A,N/A,Needs Review,Medium,Pending,No

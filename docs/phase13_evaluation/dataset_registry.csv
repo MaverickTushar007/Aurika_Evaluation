@@ -1,0 +1,5 @@
+Official Name,Category,Task,Annotations Available,License,Evaluation Protocol,Paper,Official Benchmark Metrics
+PersonPath22,Surveillance,Tracking,"Bounding boxes, Track IDs",CC-BY,"MOTA, IDF1, HOTA",PersonPath22: Tracking in complex scenes,Pending Benchmark Execution
+VIRAT,Surveillance,Action Recognition,"Bounding boxes, Actions",Public Domain,Action mAP,A Large-scale Benchmark Dataset for Event Recognition,Pending Benchmark Execution
+CrowdHuman,Crowd Analysis,Detection,Bounding boxes,Custom,"mAP, MR^-2",CrowdHuman: A Benchmark for Detecting Human in a Crowd,Pending Benchmark Execution
+AI Smart Restaurant,Restaurant,Detection,Bounding boxes,Unknown,mAP,None,Pending Benchmark Execution

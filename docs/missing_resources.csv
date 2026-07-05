@@ -1,0 +1,8 @@
+Name,Category,Importance,Why Aurika needs it,Expected Business Value,Expected Technical Value,Difficulty,Storage Required,License,Official Download URL,Priority
+EPIC-Kitchens,Egocentric Dataset,Critical,Need real-world kitchen workflow actions,High (Staff compliance),High (Action Recognition),High,800GB,Academic,epic-kitchens.github.io,Priority 0
+TrackEval,Evaluation Benchmark,Critical,Standardized HOTA tracking metric calculation,High (Accuracy proxy),Very High (Scientific rigor),Low,50MB,MIT,github.com/JonathonLuiten/TrackEval,Priority 0
+CrowdHuman,Crowd Dataset,Critical,Occlusion robustness in dense scenarios,High (Occupancy counting),High (Detection robust),Medium,150GB,Custom,crowdhuman.org,Priority 1
+SAM2,Foundation Model,High,"Zero-shot segmentation of novel items (trays, utensils)",High (Menu adaptability),Very High (Zero-shot),High,10GB,Apache 2.0,github.com/facebookresearch/segment-anything-2,Priority 1
+DanceTrack,Tracking Dataset,High,Test tracker against erratic non-linear human motion,Medium (Waitstaff tracking),High (ReID),Medium,20GB,Academic,dancetrack.github.io,Priority 1
+Retail50K,Retail Dataset,Medium,Detect items on counters,High (Checkout/POS),Medium (Detection),Medium,10GB,Academic,Unknown,Priority 2
+MOTSynth,Synthetic Dataset,Medium,Pretrain tracking architectures,Medium (Generalization),High (Data volume),Low,300GB+,Academic,motchallenge.net,Priority 2

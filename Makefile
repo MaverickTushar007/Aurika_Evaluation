@@ -1,33 +1,50 @@
-# Makefile
-.PHONY: setup test benchmark train docker-build clean help
+.PHONY: install test lint run build clean
 
-setup:
-	pip install -r requirements.txt
-	pip install -e .
-	pip install pytest
+# Python executable to use
+PYTHON = python3
+VENV = .venv
+BIN = $(VENV)/bin/python
+
+install:
+	@echo "Installing backend dependencies..."
+	$(PYTHON) -m venv $(VENV)
+	$(VENV)/bin/pip install --upgrade pip
+	$(VENV)/bin/pip install -r requirements.txt
+	@echo "Installing frontend dependencies..."
+	cd dashboard && npm ci
+	@echo "Installing pre-commit hooks..."
+	$(VENV)/bin/pip install pre-commit
+	$(VENV)/bin/pre-commit install
+	@echo "Installation complete."
 
 test:
-	PYTHONPATH=. ./venv/bin/python -m pytest tests/
+	@echo "Running backend unit tests..."
+	$(BIN) -m unittest discover -s pilot/tests -v
+	@echo "Running frontend tests..."
+	cd dashboard && npm run test
 
-benchmark:
-	./venv/bin/python benchmark/run_benchmark.py --config configs/benchmark.yaml
+lint:
+	@echo "Running backend linters..."
+	$(VENV)/bin/flake8 .
+	$(VENV)/bin/black --check .
+	$(VENV)/bin/isort --check-only .
+	@echo "Running frontend linters..."
+	cd dashboard && npm run lint
 
-train:
-	./venv/bin/python training/run_retraining.py --epochs 50
+run:
+	@echo "Starting Pilot Runtime & Dashboard..."
+	# Starts python runner in background and dashboard in foreground
+	$(BIN) -m pilot.scripts.run_pilot_deployment &
+	cd dashboard && npm run dev
 
-docker-build:
-	docker build -f deployment/Dockerfile -t restaurant-analytics:v2.0.0 .
+build:
+	@echo "Building production dashboard bundle..."
+	cd dashboard && npm run build
 
 clean:
-	rm -rf build/ dist/ *.egg-info/ .pytest_cache/
-	find . -name "*.pyc" -delete
-	find . -name "__pycache__" -delete
-
-help:
-	@echo "Available commands:"
-	@echo "  setup         Install packages and test dependencies"
-	@echo "  test          Run automated unit/integration tests"
-	@echo "  benchmark     Execute performance benchmark suite"
-	@echo "  train         Trigger detector training (Run B: 50 epochs)"
-	@echo "  docker-build  Build production Docker container image"
-	@echo "  clean         Remove compile and testing caches"
+	@echo "Cleaning caches and virtual environments..."
+	rm -rf $(VENV)
+	rm -rf dashboard/node_modules
+	rm -rf dashboard/dist
+	find . -type d -name "__pycache__" -exec rm -r {} +
+	@echo "Clean complete."

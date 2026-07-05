@@ -42,6 +42,7 @@ class Visit:
         self.pending_zone_entry_time: Optional[datetime] = None
         
         self.last_centroid: Optional[tuple] = None
+        self.previous_centroid: Optional[tuple] = None
         
         # Phase 4: State Engine attributes
         self.current_state: str = "UNKNOWN"
@@ -53,6 +54,13 @@ class Visit:
         
         # Legacy metrics dictionary
         self.metrics: Dict[str, Any] = {}
+        
+        # Debounce and lock flags for business events
+        self.guest_entered_fired = False
+        self.guest_exited_fired = False
+        self.waiting_fired = False
+        self.seated_fired = False
+        self.left_table_fired = False
         
     @property
     def overall_confidence(self) -> float:
@@ -210,6 +218,7 @@ class VisitManager:
         if not visit: return
         
         if centroid:
+            visit.previous_centroid = visit.last_centroid
             visit.last_centroid = centroid
 
         if visit.current_zone == new_zone:
@@ -236,6 +245,86 @@ class VisitManager:
                     old_zone = visit.current_zone
                     new_zone = visit.pending_zone
                     visit.update_zone(new_zone, current_timestamp)
+                    
+                    # 1. Entrance crossing GuestEntered
+                    if old_zone != "Entrance" and new_zone == "Entrance":
+                        if not visit.guest_entered_fired:
+                            visit.guest_entered_fired = True
+                            from restaurant_analytics.event_engine import BusinessEvent, EventType
+                            ent_ev = BusinessEvent(
+                                visit_id=visit.visit_id, person_id=visit.person_id, track_id=track_id,
+                                event_type=EventType.GuestEntered, timestamp=current_timestamp,
+                                zone="Entrance", camera=visit.camera_id
+                            )
+                            self.event_engine.publish(ent_ev)
+                            visit.events.append(ent_ev)
+                            self.state_engine.process_event(visit, ent_ev)
+                            prev_xy = visit.previous_centroid or (0,0)
+                            curr_xy = visit.last_centroid or (0,0)
+                            print(f"ENTRY GATE CROSSED | Track {track_id} | Previous {prev_xy} | Current {curr_xy} | Gate Entrance | Event GuestEntered")
+
+                    # 2. Exit crossing GuestExited
+                    elif old_zone != "Exit" and new_zone == "Exit":
+                        if not visit.guest_exited_fired and visit.guest_entered_fired:
+                            visit.guest_exited_fired = True
+                            from restaurant_analytics.event_engine import BusinessEvent, EventType
+                            ex_ev = BusinessEvent(
+                                visit_id=visit.visit_id, person_id=visit.person_id, track_id=track_id,
+                                event_type=EventType.GuestExited, timestamp=current_timestamp,
+                                zone="Exit", camera=visit.camera_id
+                            )
+                            self.event_engine.publish(ex_ev)
+                            visit.events.append(ex_ev)
+                            self.state_engine.process_event(visit, ex_ev)
+                            prev_xy = visit.previous_centroid or (0,0)
+                            curr_xy = visit.last_centroid or (0,0)
+                            print(f"EXIT GATE CROSSED | Track {track_id} | Previous {prev_xy} | Current {curr_xy} | Gate Exit | Event GuestExited")
+
+                    # 3. Waiting Area crossing
+                    elif new_zone == "Waiting Area":
+                        if not visit.waiting_fired:
+                            visit.waiting_fired = True
+                            from restaurant_analytics.event_engine import BusinessEvent, EventType
+                            w_ev = BusinessEvent(
+                                visit_id=visit.visit_id, person_id=visit.person_id, track_id=track_id,
+                                event_type=EventType.WaitingStarted, timestamp=current_timestamp,
+                                zone="Waiting Area", camera=visit.camera_id
+                            )
+                            self.event_engine.publish(w_ev)
+                            visit.events.append(w_ev)
+                            self.state_engine.process_event(visit, w_ev)
+                            print(f"WAITING ZONE ENTERED | Track {track_id} | Event Waiting")
+
+                    # 4. Table 101 Seated crossing
+                    elif new_zone == "Table 101":
+                        if not visit.seated_fired:
+                            visit.seated_fired = True
+                            from restaurant_analytics.event_engine import BusinessEvent, EventType
+                            s_ev = BusinessEvent(
+                                visit_id=visit.visit_id, person_id=visit.person_id, track_id=track_id,
+                                event_type=EventType.DiningStarted, timestamp=current_timestamp,
+                                zone="Table 101", camera=visit.camera_id
+                            )
+                            self.event_engine.publish(s_ev)
+                            visit.events.append(s_ev)
+                            self.state_engine.process_event(visit, s_ev)
+                            print(f"TABLE POLYGON ENTERED | Track {track_id} | Event Seated")
+
+                    # 5. Table 101 LeftTable crossing
+                    if old_zone == "Table 101" and new_zone != "Table 101":
+                        if not visit.left_table_fired and visit.seated_fired:
+                            visit.left_table_fired = True
+                            from restaurant_analytics.event_engine import BusinessEvent, EventType
+                            l_ev = BusinessEvent(
+                                visit_id=visit.visit_id, person_id=visit.person_id, track_id=track_id,
+                                event_type=EventType.LeftTable, timestamp=current_timestamp,
+                                zone="Table 101", camera=visit.camera_id
+                            )
+                            self.event_engine.publish(l_ev)
+                            visit.events.append(l_ev)
+                            self.state_engine.process_event(visit, l_ev)
+                            print(f"TABLE POLYGON EXITED | Track {track_id} | Event LeftTable")
+
                     events = self.event_engine.publish_zone_change(
                         visit_id=visit.visit_id, person_id=visit.person_id, track_id=track_id, 
                         timestamp=current_timestamp, camera=visit.camera_id, 

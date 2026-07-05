@@ -54,14 +54,22 @@ class ZoneMapper:
     def get_zone_for_bbox(self, bbox: List[float]) -> Optional[str]:
         """
         Determines the zone for a bounding box. Uses the bottom-center point of the bounding box.
+        Nested sub-zones (like Table 101) are checked first by sorting zones by area.
         """
         x1, y1, x2, y2 = bbox
         bottom_center = ((x1 + x2) / 2.0, y2)
         
-        # Optionally project to floor space first if homography is enabled
         target_point = self.map_pixel_to_floor(bottom_center)
 
-        for zone_id, polygon in self.zones.items():
+        # Sort zones by polygon area (bounding box approximation) in ascending order
+        def get_area(poly):
+            xs = [pt[0] for pt in poly]
+            ys = [pt[1] for pt in poly]
+            return (max(xs) - min(xs)) * (max(ys) - min(ys))
+
+        sorted_zones = sorted(self.zones.items(), key=lambda item: get_area(item[1]))
+
+        for zone_id, polygon in sorted_zones:
             if self.is_inside_zone(target_point, polygon):
                 return zone_id
-        return None
+        return "UNKNOWN_ZONE"

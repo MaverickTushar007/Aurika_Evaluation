@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aurika — Explainable KPI & Journey Verification Panel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: #111827;
+            --border-color: #1f2937;
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --primary: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            overflow-x: hidden;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+            background-color: var(--card-bg);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            color: var(--primary);
+        }
+
+        select {
+            background-color: #1f2937;
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            padding: 1.5rem 2rem;
+            height: calc(100vh - 5.5rem);
+        }
+
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .video-container {
+            position: relative;
+            background-color: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+            aspect-ratio: 16/9;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .kpi-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+        }
+
+        .kpi-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 1rem;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .kpi-card.highlight {
+            border-color: var(--primary);
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
+            transform: scale(1.02);
+        }
+
+        .kpi-label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.25rem;
+        }
+
+        .kpi-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+        }
+
+        .right-panel {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .journeys-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .journey-item {
+            background-color: #1f2937;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .journey-item:hover, .journey-item.active {
+            border-color: var(--primary);
+        }
+
+        .journey-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .journey-id {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .journey-state {
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 20px;
+            font-weight: 600;
+            background-color: #374151;
+        }
+
+        .journey-state.seated {
+            background-color: rgba(16, 185, 129, 0.15);
+            color: var(--primary);
+        }
+
+        .journey-details {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .journey-timeline {
+            margin-top: 0.75rem;
+            border-top: 1px dashed var(--border-color);
+            padding-top: 0.75rem;
+            display: none;
+        }
+
+        .journey-item.expanded .journey-timeline {
+            display: block;
+        }
+
+        .timeline-node {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.25rem;
+            font-size: 0.8rem;
+        }
+
+        .evidence-pics {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            overflow-x: auto;
+        }
+
+        .evidence-pic {
+            width: 60px;
+            height: 60px;
+            border-radius: 6px;
+            object-fit: cover;
+            border: 1px solid var(--border-color);
+            background-color: #000;
+        }
+
+        .actions-row {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        button {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.8rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            color: white;
+            transition: all 0.2s ease;
+        }
+
+        .btn-merge { background-color: var(--primary); }
+        .btn-delete { background-color: var(--danger); }
+        .btn-correct { background-color: var(--warning); }
+        button:hover { opacity: 0.9; }
+
+        /* Modal Dialog */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(0,0,0,0.6);
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .modal-content {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            padding: 2rem;
+            border-radius: 12px;
+            width: 400px;
+            max-width: 90vw;
+        }
+
+        .modal-content h3 {
+            margin-top: 0;
+            margin-bottom: 1rem;
+        }
+
+        .modal-content select, .modal-content input {
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>AURIKA — Verification Panel</h1>
+        <div>
+            <label for="run-select">Selected Run: </label>
+            <select id="run-select" onchange="loadRunData()">
+                <option value="">Loading runs...</option>
+            </select>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="left-panel">
+            <div class="video-container">
+                <video id="vid-player" controls>
+                    <source src="" type="video/mp4">
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+            
+            <div class="kpi-row">
+                <div class="kpi-card" id="kpi-entered">
+                    <div class="kpi-label">Entered</div>
+                    <div class="kpi-value" id="val-entered">0</div>
+                </div>
+                <div class="kpi-card" id="kpi-seated">
+                    <div class="kpi-label">Seated</div>
+                    <div class="kpi-value" id="val-seated">0</div>
+                </div>
+                <div class="kpi-card" id="kpi-exited">
+                    <div class="kpi-label">Exited</div>
+                    <div class="kpi-value" id="val-exited">0</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <div class="panel-header">Customer Journeys Timeline</div>
+            <div class="journeys-list" id="journeys-list">
+                <!-- Populated dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div class="modal" id="modal-merge">
+        <div class="modal-content">
+            <h3>Merge Journey</h3>
+            <p>Merge current journey into:</p>
+            <select id="merge-target-select"></select>
+            <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.5rem;">
+                <button onclick="closeModal('modal-merge')" style="background-color:#4b5563;">Cancel</button>
+                <button onclick="submitMerge()" style="background-color:var(--primary);">Merge</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="modal-correct">
+        <div class="modal-content">
+            <h3>Correct Zone / Table</h3>
+            <label>Correct Current Zone:</label>
+            <input type="text" id="correct-zone-input" placeholder="e.g. Waiting Area">
+            <label style="margin-top: 1rem; display:block;">Correct Table Assignment:</label>
+            <input type="text" id="correct-table-input" placeholder="e.g. Table 101">
+            <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.5rem;">
+                <button onclick="closeModal('modal-correct')" style="background-color:#4b5563;">Cancel</button>
+                <button onclick="submitCorrection()" style="background-color:var(--primary);">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentRun = "";
+        let journeys = [];
+        let kpis = {};
+        let selectedJourneyId = "";
+
+        async function init() {
+            const resp = await fetch("/api/runs");
+            const runs = await resp.json();
+            const select = document.getElementById("run-select");
+            select.innerHTML = "";
+            runs.forEach(r => {
+                const opt = document.createElement("option");
+                opt.value = r;
+                opt.textContent = r;
+                select.appendChild(opt);
+            });
+            if (runs.length > 0) {
+                select.value = runs[0];
+                loadRunData();
+            }
+        }
+
+        async function loadRunData() {
+            const select = document.getElementById("run-select");
+            currentRun = select.value;
+            if (!currentRun) return;
+
+            // Set video source
+            const player = document.getElementById("vid-player");
+            player.src = `/runs/${currentRun}/output.mp4`;
+            player.load();
+
+            const resp = await fetch(`/api/run/${currentRun}`);
+            const data = await resp.json();
+            journeys = data.journeys;
+            kpis = data.kpis;
+
+            // Update KPIs
+            document.getElementById("val-entered").textContent = kpis.customers_entered ? kpis.customers_entered.value : 0;
+            document.getElementById("val-seated").textContent = kpis.customers_seated ? kpis.customers_seated.value : 0;
+            document.getElementById("val-exited").textContent = kpis.customers_exited ? kpis.customers_exited.value : 0;
+
+            renderJourneys();
+        }
+
+        function renderJourneys() {
+            const list = document.getElementById("journeys-list");
+            list.innerHTML = "";
+
+            journeys.forEach(j => {
+                const isSeated = j.state === "SEATED";
+                const item = document.createElement("div");
+                item.className = `journey-item ${selectedJourneyId === j.journey_id ? 'expanded active' : ''}`;
+                item.onclick = (e) => {
+                    if (e.target.tagName === 'BUTTON') return;
+                    selectedJourneyId = selectedJourneyId === j.journey_id ? "" : j.journey_id;
+                    renderJourneys();
+                };
+
+                const timelineHtml = j.timeline.map(node => `
+                    <div class="timeline-node">
+                        <span style="color:var(--primary);">✦</span>
+                        <span>Frame ${node.frame}: <strong>${node.state}</strong> (${new Date(node.timestamp).toLocaleTimeString()})</span>
+                    </div>
+                `).join('');
+
+                const picsHtml = ["entered", "waiting", "seated", "exit"]
+                    .map(state => `/runs/${currentRun}/evidence/${j.journey_id}_${state}.jpg`)
+                    .map(src => `<img class="evidence-pic" src="${src}" onerror="this.style.display='none'">`)
+                    .join('');
+
+                item.innerHTML = `
+                    <div class="journey-header">
+                        <div class="journey-id">Journey: ${j.journey_id.slice(0,8)}...</div>
+                        <div class="journey-state ${isSeated ? 'seated' : ''}">${j.state}</div>
+                    </div>
+                    <div class="journey-details">
+                        <span>Duration: ${j.waiting_duration + j.dining_duration}s</span>
+                        <span>Trackers: ${j.tracker_ids_merged ? j.tracker_ids_merged.join(', ') : 'None'}</span>
+                        <span>Current Zone: ${j.current_zone} | Table: ${j.table_id || 'None'}</span>
+                    </div>
+                    <div class="journey-timeline">
+                        ${timelineHtml}
+                        <div class="evidence-pics">
+                            ${picsHtml}
+                        </div>
+                        <div class="actions-row">
+                            <button class="btn-merge" onclick="openMergeModal('${j.journey_id}')">Merge</button>
+                            <button class="btn-correct" onclick="openCorrectModal('${j.journey_id}', '${j.current_zone}', '${j.table_id || ''}')">Correct</button>
+                            <button class="btn-delete" onclick="deleteJourney('${j.journey_id}')">Delete</button>
+                        </div>
+                    </div>
+                `;
+                list.appendChild(item);
+            });
+        }
+
+        function openMergeModal(jid) {
+            selectedJourneyId = jid;
+            const targetSelect = document.getElementById("merge-target-select");
+            targetSelect.innerHTML = "";
+            journeys.forEach(j => {
+                if (j.journey_id !== jid) {
+                    const opt = document.createElement("option");
+                    opt.value = j.journey_id;
+                    opt.textContent = j.journey_id.slice(0,8) + "...";
+                    targetSelect.appendChild(opt);
+                }
+            });
+            document.getElementById("modal-merge").style.display = "flex";
+        }
+
+        function openCorrectModal(jid, zone, table) {
+            selectedJourneyId = jid;
+            document.getElementById("correct-zone-input").value = zone;
+            document.getElementById("correct-table-input").value = table;
+            document.getElementById("modal-correct").style.display = "flex";
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).style.display = "none";
+        }
+
+        async function submitMerge() {
+            const targetId = document.getElementById("merge-target-select").value;
+            const resp = await fetch("/api/correct", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    run: currentRun,
+                    action: "merge",
+                    params: { journey_id_1: targetId, journey_id_2: selectedJourneyId }
+                })
+            });
+            closeModal("modal-merge");
+            loadRunData();
+        }
+
+        async function submitCorrection() {
+            const zone = document.getElementById("correct-zone-input").value;
+            const table = document.getElementById("correct-table-input").value;
+            
+            let action = "correct_zone";
+            let params = { journey_id: selectedJourneyId, zone };
+            if (table) {
+                action = "correct_table";
+                params = { journey_id: selectedJourneyId, table };
+            }
+
+            const resp = await fetch("/api/correct", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    run: currentRun,
+                    action,
+                    params
+                })
+            });
+            closeModal("modal-correct");
+            loadRunData();
+        }
+
+        async function deleteJourney(jid) {
+            if (!confirm("Are you sure you want to delete this journey?")) return;
+            const resp = await fetch("/api/correct", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    run: currentRun,
+                    action: "delete",
+                    params: { journey_id: jid }
+                })
+            });
+            loadRunData();
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

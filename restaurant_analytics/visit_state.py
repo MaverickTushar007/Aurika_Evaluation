@@ -11,15 +11,15 @@ logger = logging.getLogger("StateEngine")
 
 class GuestState(Enum):
     UNKNOWN = "UNKNOWN"
-    ENTERING = "ENTERING"
-    GREETING = "GREETING"
-    WAITING = "WAITING"
-    ESCORTED = "ESCORTED"
-    SEATED = "SEATED"
-    DINING = "DINING"
-    PAYING = "PAYING"
-    EXITING = "EXITING"
-    EXITED = "EXITED"
+    ENTERING = "Customer Entered"
+    GREETING = "Reached Reception"
+    WAITING = "Waiting"
+    ESCORTED = "Walking To Table"
+    SEATED = "Seated"
+    DINING = "Seated"
+    PAYING = "Leaving Table"
+    EXITING = "Exited Restaurant"
+    EXITED = "Exited Restaurant"
 
 class StaffState(Enum):
     UNKNOWN = "UNKNOWN"
@@ -48,7 +48,7 @@ class StateTransitionValidator:
     
     GUEST_VALID_TRANSITIONS = {
         GuestState.UNKNOWN: {GuestState.ENTERING, GuestState.WAITING, GuestState.SEATED}, # Can start anywhere if tracking lost
-        GuestState.ENTERING: {GuestState.GREETING, GuestState.WAITING, GuestState.SEATED, GuestState.EXITING},
+        GuestState.ENTERING: {GuestState.GREETING, GuestState.WAITING, GuestState.ESCORTED, GuestState.SEATED, GuestState.EXITING},
         GuestState.GREETING: {GuestState.WAITING, GuestState.ESCORTED, GuestState.SEATED, GuestState.EXITING},
         GuestState.WAITING: {GuestState.ESCORTED, GuestState.SEATED, GuestState.EXITING},
         GuestState.ESCORTED: {GuestState.SEATED, GuestState.DINING},
@@ -152,11 +152,20 @@ class StateEngine:
             
         if event.event_type.value == "enter_zone":
             zone = event.zone.lower() if event.zone else ""
-            if "dining" in zone or "table" in zone:
-                self.transition(visit, GuestState.SEATED.value, event.timestamp, reason="Entered Dining Zone", source_event=event)
+            if "table" in zone:
+                self.transition(visit, GuestState.SEATED.value, event.timestamp, reason="Entered Table Polygon", source_event=event)
+            elif "dining" in zone:
+                self.transition(visit, GuestState.ESCORTED.value, event.timestamp, reason="Entered Dining Zone", source_event=event)
+            elif "waiting" in zone:
+                self.transition(visit, GuestState.WAITING.value, event.timestamp, reason="Entered Waiting Zone", source_event=event)
             elif "exit" in zone or "door" in zone:
                 self.transition(visit, GuestState.EXITING.value, event.timestamp, reason="Entered Exit Zone", source_event=event)
                 
+        elif event.event_type.value == "exit_zone":
+            zone = event.zone.lower() if event.zone else ""
+            if "table" in zone:
+                self.transition(visit, GuestState.PAYING.value, event.timestamp, reason="Left Table Polygon", source_event=event)
+
         elif event.event_type.value == "GuestExited":
             self.transition(visit, GuestState.EXITED.value, event.timestamp, reason="Visit Closed", source_event=event)
 
