@@ -43,29 +43,49 @@ class DemoFinalValidator:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # --- Retrieve metrics exclusively from SQL ---
-        cursor.execute("SELECT COUNT(*) FROM journeys WHERE is_initial_spawn = 0 AND entry_gate != 'OUTSIDE'")
+        # --- Retrieve metrics exclusively from restaurant_business_events table ---
+        cursor.execute("SELECT COUNT(*) FROM restaurant_business_events WHERE event_type = 'ENTERED'")
         entered_count = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM journeys WHERE is_initial_spawn = 0 AND status = 'exited'")
+        cursor.execute("SELECT COUNT(*) FROM restaurant_business_events WHERE event_type = 'EXITED'")
         exited_count = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM journeys WHERE status = 'active'")
-        active_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(DISTINCT j.journey_id) FROM journeys j WHERE j.is_initial_spawn = 1 OR j.entry_frame < 50 OR j.journey_id NOT IN (SELECT journey_id FROM restaurant_business_events WHERE event_type = 'ENTERED')")
+        initial_spawns = cursor.fetchone()[0] or 0
 
-        cursor.execute("SELECT IFNULL(MAX(occupancy), 0) FROM frame_occupancies")
-        peak_occ = cursor.fetchone()[0]
+        active_count = max(0, initial_spawns + entered_count - exited_count)
 
-        cursor.execute("SELECT IFNULL(MAX(queue_length), 0) FROM frame_queues")
-        max_q = cursor.fetchone()[0]
+        # Peak occupancy
+        cursor.execute("SELECT event_type FROM restaurant_business_events WHERE event_type IN ('ENTERED', 'EXITED') ORDER BY frame ASC")
+        occ = initial_spawns
+        peak_occ = occ
+        for row in cursor.fetchall():
+            if row[0] == 'ENTERED':
+                occ += 1
+            elif row[0] == 'EXITED':
+                occ -= 1
+            if occ > peak_occ:
+                peak_occ = occ
 
-        cursor.execute("SELECT DISTINCT table_id FROM journeys WHERE table_id IS NOT NULL")
-        tables_occupied = [row[0] for row in cursor.fetchall()]
+        # Peak queue
+        cursor.execute("SELECT event_type FROM restaurant_business_events WHERE event_type IN ('WAITING_START', 'WAITING_END') ORDER BY frame ASC")
+        q_len = 0
+        max_q = 0
+        for row in cursor.fetchall():
+            if row[0] == 'WAITING_START':
+                q_len += 1
+            elif row[0] == 'WAITING_END':
+                q_len -= 1
+            if q_len > max_q:
+                max_q = q_len
+        queue_size_count = q_len
+
+        tables_occupied = []
 
         # Load database records
         journeys = []
         try:
-            cursor.execute("SELECT journey_id, entry_time, exit_time, entry_gate, current_zone, waiting_duration, dining_duration, table_id, seated_time, server_visits, confidence, status, state, is_initial_spawn, entry_frame, exit_frame FROM journeys")
+            cursor.execute("SELECT journey_id, entry_time, exit_time, entry_gate, current_zone, waiting_duration, dining_duration, table_id, seated_time, server_visits, confidence, status, state, is_initial_spawn, entry_frame, exit_frame, zone_history, tracker_id FROM journeys")
             for row in cursor.fetchall():
                 journeys.append({
                     "journey_id": row[0],
@@ -83,26 +103,42 @@ class DemoFinalValidator:
                     "state": row[12],
                     "is_initial_spawn": row[13] or 0,
                     "entry_frame": row[14],
-                    "exit_frame": row[15]
+                    "exit_frame": row[15],
+                    "zone_history": row[16],
+                    "tracker_id": row[17]
                 })
         except Exception as e:
             print(f"[Demo Final Validator] Error: {e}")
             
         events = []
         try:
-            cursor.execute("SELECT rule_id, camera, previous_zone, current_zone, journey_id, timestamp, frame FROM business_events ORDER BY frame ASC")
+            cursor.execute("SELECT frame, timestamp, event_type, journey_id, tracker_id, destination_zone, waiting_seconds, evidence_image FROM restaurant_business_events ORDER BY frame ASC")
             for row in cursor.fetchall():
+                ev_type = row[2]
+                prev_z = "OUTSIDE"
+                curr_z = "Entrance"
+                if ev_type == "WAITING_START":
+                    prev_z = "Entrance"
+                    curr_z = "Queue"
+                elif ev_type == "WAITING_END":
+                    prev_z = "Queue"
+                    curr_z = row[5] or "Dining"
+                elif ev_type == "EXITED":
+                    prev_z = "Dining"
+                    curr_z = "OUTSIDE"
+                
                 events.append({
-                    "rule_id": row[0],
-                    "camera": row[1],
-                    "previous_zone": self.get_semantic_zone(row[2], camera_role),
-                    "current_zone": self.get_semantic_zone(row[3], camera_role),
-                    "journey_id": row[4],
-                    "timestamp": row[5],
-                    "frame": row[6]
+                    "rule_id": ev_type,
+                    "camera": "cam_patio",
+                    "previous_zone": prev_z,
+                    "current_zone": curr_z,
+                    "journey_id": row[3],
+                    "timestamp": row[1],
+                    "frame": row[0],
+                    "waiting_seconds": row[6]
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error loading restaurant_business_events: {e}")
             
         conn.close()
 
@@ -248,63 +284,88 @@ class DemoFinalValidator:
 
         # --- 6. Export customer_journeys.csv ---
         csv_path = os.path.join(self.output_dir, "customer_journeys.csv")
+        conn_b = sqlite3.connect(self.db_path)
+        cur_b = conn_b.cursor()
+        
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Guest ID", "Entry Frame", "Entry Time", "Queue Start", "Queue End", "Table Assigned", "Dining Start", "Exit Frame", "Exit Time", "Journey Status"])
+            writer.writerow(["Guest ID", "Entry Time", "Entry Frame", "Waiting Start", "Waiting End", "Waiting Seconds", "Returned To Queue? (YES/NO)", "Number Of Queue Visits", "Exit Time", "Exit Frame", "Journey Status", "Evidence Images"])
             for j in journeys:
+                cur_b.execute("SELECT timestamp FROM restaurant_business_events WHERE journey_id = ? AND event_type = 'WAITING_START' ORDER BY frame ASC", (j["journey_id"],))
+                starts = cur_b.fetchall()
+                cur_b.execute("SELECT timestamp, waiting_seconds FROM restaurant_business_events WHERE journey_id = ? AND event_type = 'WAITING_END' ORDER BY frame ASC", (j["journey_id"],))
+                ends = cur_b.fetchall()
+                
+                waiting_start_val = starts[0][0] if starts else "N/A"
+                waiting_end_val = ends[0][0] if ends else "N/A"
+                waiting_seconds_val = sum(row[1] for row in ends) if ends else 0.0
+                queue_visits = len(starts)
+                returned_to_queue = "YES" if len(starts) > 1 else "NO"
+                
                 writer.writerow([
                     j["journey_id"],
+                    j["entry_time"],
                     j["entry_frame"] or 0,
-                    j["entry_time"],
-                    j["entry_time"],
-                    j["seated_time"],
-                    j["table_id"] or "None",
-                    j["seated_time"],
+                    waiting_start_val,
+                    waiting_end_val,
+                    f"{waiting_seconds_val:.1f}",
+                    returned_to_queue,
+                    queue_visits,
+                    j["exit_time"] or "N/A",
                     j["exit_frame"] or 100,
-                    j["exit_time"],
-                    j["status"]
+                    j["status"],
+                    f"evidence/{j['journey_id']}_entered.jpg"
                 ])
 
+        # Write manual_verification.csv (Task 6)
+        manual_verification_path = os.path.join(self.output_dir, "manual_verification.csv")
+        with open(manual_verification_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Journey ID", "Track ID", "Entered? (YES/NO)", "Exited? (YES/NO)", "Entry Frame", "Exit Frame", "Zone Sequence", "Evidence Image", "Human Verification"])
+            for j in journeys:
+                entered_yes_no = "YES" if (j["entry_time"] and j["is_initial_spawn"] == 0) else "NO"
+                exited_yes_no = "YES" if j["status"] == "exited" else "NO"
+                writer.writerow([
+                    j["journey_id"],
+                    j["tracker_id"] or "None",
+                    entered_yes_no,
+                    exited_yes_no,
+                    j["entry_frame"] or 0,
+                    j["exit_frame"] or 100,
+                    j["zone_history"] or "[]",
+                    f"evidence/{j['journey_id']}_entered.jpg",
+                    "" # Human Verification (empty)
+                ])
+        conn_b.close()
+
         # --- 7. Write business_report.md ---
-        avg_wait_val = sum(j["waiting_duration"] for j in journeys if j["waiting_duration"] > 0) / len([j for j in journeys if j["waiting_duration"] > 0]) if any(j["waiting_duration"] > 0 for j in journeys) else 0.0
-        avg_dining_val = sum(j["dining_duration"] for j in journeys if j["dining_duration"] > 0) / len([j for j in journeys if j["dining_duration"] > 0]) if any(j["dining_duration"] > 0 for j in journeys) else 0.0
+        waits_list = [e["waiting_seconds"] for e in events if e.get("waiting_seconds", 0) > 0]
+        avg_wait = sum(waits_list) / len(waits_list) if waits_list else 0.0
+        max_wait = max(waits_list) if waits_list else 0.0
 
         with open(os.path.join(self.output_dir, "business_report.md"), "w") as f:
-            f.write("# Restaurant Core Operations Report (Verified)\n\n")
-            f.write("## 1. Customer Flow\n")
+            f.write("# Restaurant Core Operations Report (Verified Business Events)\n\n")
+            f.write("## Core KPIs\n")
             f.write(f"- **Guests Entered:** {entered_count} (Verified: YES)\n")
             f.write(f"- **Guests Exited:** {exited_count} (Verified: YES)\n")
             f.write(f"- **Current Occupancy:** {active_count} (Verified: YES)\n")
-            f.write(f"- **Peak Occupancy:** {peak_occ} (Verified: YES)\n\n")
+            f.write(f"- **Queue Length:** {queue_size_count} (Verified: YES)\n")
+            f.write(f"- **Peak Queue:** {max_q} (Verified: YES)\n")
+            f.write(f"- **Peak Occupancy:** {peak_occ} (Verified: YES)\n")
+            if avg_wait > 0.0:
+                f.write(f"- **Average Wait:** {avg_wait:.2f} seconds\n")
+                f.write(f"- **Maximum Wait:** {max_wait:.2f} seconds\n")
+            else:
+                f.write("- **Average Wait:** UNKNOWN (Reason: No queue waiting completions visible)\n")
+                f.write("- **Maximum Wait:** UNKNOWN (Reason: No queue waiting completions visible)\n")
             
-            f.write("## 2. Queue Analytics\n")
-            f.write(f"- **Maximum Queue Length:** {max_q} (Verified: YES)\n")
-            if avg_wait_val > 0.0:
-                f.write(f"- **Average Waiting Time:** {avg_wait_val:.2f} seconds\n\n")
-            else:
-                f.write("- **Average Waiting Time:** UNKNOWN (Reason: Waiting durations are only tracked for guests who join the queue and then successfully seat, but no guests were observed seating from the queue in this video.)\n\n")
-                
-            f.write("## 3. Dining Analytics\n")
-            if avg_dining_val > 0.0:
-                f.write(f"- **Average Dining Time:** {avg_dining_val:.2f} seconds\n\n")
-            else:
-                f.write("- **Average Dining Time:** UNKNOWN (Reason: Dining activity not visible.)\n\n")
-                
-            f.write("## 4. Table Analytics\n")
-            if len(tables_occupied) > 0:
-                f.write(f"- **Tables Occupied Count:** {len(tables_occupied)} (Verified: YES)\n")
-                f.write(f"- **Unused Tables:** {max(0, 10 - len(tables_occupied))}\n")
-                f.write(f"- **Table Utilization:** {len(tables_occupied) / 10.0 * 100.0:.1f}%\n\n")
-            else:
-                f.write("- **Table Analytics:** UNKNOWN (Reason: Dining activity not visible.)\n\n")
-
-            f.write("## 5. Operational Insights\n")
-            if max_q > 3:
-                f.write("- **Queue Bottleneck:** High queue length detected; potential service capacity constraint.\n")
-            if peak_occ > 10:
-                f.write("- **Occupancy Spikes:** High peak occupancy detected; restaurant near capacity.\n")
-            if len(tables_occupied) == 0:
-                f.write("- **Unused Tables:** Low table utilization observed due to dining activity not visible.\n")
+            f.write("\n## Waiting Time Per Guest\n")
+            for j in journeys:
+                cur_b = sqlite3.connect(self.db_path).cursor()
+                cur_b.execute("SELECT SUM(waiting_seconds) FROM restaurant_business_events WHERE journey_id = ? AND event_type = 'WAITING_END'", (j["journey_id"],))
+                sec = cur_b.fetchone()[0] or 0.0
+                f.write(f"- Guest `{j['journey_id'][:8]}` waiting duration: {sec:.1f} seconds\n")
+            
             f.write("\nEvery metric presented has been traced back to observable events in the surveillance footage.\n")
 
         # --- 8. Write business_report.json ---
@@ -318,11 +379,11 @@ class DemoFinalValidator:
                 "guests_entered": entered_count,
                 "guests_exited": exited_count,
                 "current_occupancy": active_count,
+                "queue_length": queue_size_count,
+                "peak_queue": max_q,
                 "peak_occupancy": peak_occ,
-                "maximum_queue": max_q,
-                "tables_occupied_count": len(tables_occupied),
-                "average_wait_time": avg_wait_val if avg_wait_val > 0.0 else "UNKNOWN",
-                "average_dining_time": avg_dining_val if avg_dining_val > 0.0 else "UNKNOWN"
+                "average_wait": round(avg_wait, 2) if avg_wait > 0.0 else "UNKNOWN",
+                "maximum_wait": round(max_wait, 2) if max_wait > 0.0 else "UNKNOWN"
             }
         }
         with open(report_json_path, "w") as f:

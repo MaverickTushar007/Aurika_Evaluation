@@ -341,9 +341,6 @@ def answer_ceo_questions(db_path, run_dir, video_path, total_frames, avg_visible
     conn.close()
 
 video_paths = [
-    "datasets/test_video.mp4",
-    "datasets/test_seated6.mp4",
-    "datasets/YTDown_YouTube_Computer-Vision-analytics-for-restaurant_Media_sFc1ZhDjvYI_001_720p.mp4",
     "datasets/Dark_lighting.mp4"
 ]
 VIDEOS = []
@@ -520,6 +517,14 @@ for _vid, _cam in VIDEOS:
     writer = None
     frame_people_counts = []
     frame_stats = []
+    event_log_rows = []
+    prev_entered_count = 0
+    prev_exited_count = 0
+    prev_queue_size = 0
+    prev_peak_occ = 0
+    banner_text = None
+    banner_color = (0, 255, 0)
+    banner_timer = 0
     
     import random
     perturb_mode = os.environ.get("OS_PERTURB_MODE")
@@ -703,66 +708,143 @@ for _vid, _cam in VIDEOS:
                     centroid_history.pop(token)
                 log_session_end(token, entry_ts, exit_ts, served_tokens, service_times, token_is_staff.get(token, 0))
 
-            # Render Executive Overlay
+            # Render Executive Overlay (Phase 2)
             overlay = frame.copy()
+            fid_clamped = min(fid, total_frames)
+
+            # Compute stats early based on business state machine (Task 3 & 4)
+            entered_count = sum(1 for j in journey_manager.journeys if j.state in ("ENTERED", "WAITING", "DINING", "EXITED") and not getattr(j, "is_initial_spawn", False))
+            exited_count = sum(1 for j in journey_manager.journeys if j.state == "EXITED" and not getattr(j, "is_initial_spawn", False))
+            curr_occ = sum(1 for j in journey_manager.journeys if j.state in ("ENTERED", "WAITING", "DINING") and not getattr(j, "is_initial_spawn", False))
+            active_tables_count = 0 # No table view in this camera role
             
-            # Draw polygon debug overlay (Priority 5)
+            queue_size_count = sum(1 for j in journey_manager.journeys if j.state == "WAITING" and not getattr(j, "is_initial_spawn", False))
+            queue_members_list = [j.journey_id for j in journey_manager.journeys if j.state == "WAITING" and not getattr(j, "is_initial_spawn", False)]
+
+            # Track peak occupancy updates
+            if curr_occ > max_occ_seen:
+                max_occ_seen = curr_occ
+                peak_occ_img = frame.copy()
+                peak_occ_frame_id = fid
+            if queue_size_count > max_q_seen:
+                max_q_seen = queue_size_count
+                max_q_img = frame.copy()
+                max_q_frame_id = fid
+
+            # Check for business events and log them / trigger banners (Task 3)
+            if entered_count > prev_entered_count:
+                recent_ent = [j for j in journey_manager.journeys if j.entry_frame == fid_clamped]
+                ent_jid = recent_ent[0].journey_id if recent_ent else "N/A"
+                ent_tid = recent_ent[0].active_tracker_ids[-1] if (recent_ent and recent_ent[0].active_tracker_ids) else "N/A"
+                banner_text = "ENTRY +1"
+                banner_color = (0, 255, 0)
+                banner_timer = 20
+                event_log_rows.append([fid_clamped, dt_ts_current.isoformat(), "Guest Entered", ent_jid, ent_tid, entered_count, exited_count, curr_occ, queue_size_count])
+                prev_entered_count = entered_count
+
+            if exited_count > prev_exited_count:
+                recent_ex = [j for j in journey_manager.journeys if j.exit_frame == fid_clamped]
+                ex_jid = recent_ex[0].journey_id if recent_ex else "N/A"
+                ex_tid = recent_ex[0].active_tracker_ids[-1] if (recent_ex and recent_ex[0].active_tracker_ids) else "N/A"
+                banner_text = "EXIT +1"
+                banner_color = (0, 0, 255)
+                banner_timer = 20
+                event_log_rows.append([fid_clamped, dt_ts_current.isoformat(), "Guest Exited", ex_jid, ex_tid, entered_count, exited_count, curr_occ, queue_size_count])
+                prev_exited_count = exited_count
+
+            if queue_size_count != prev_queue_size:
+                banner_text = f"QUEUE = {queue_size_count}"
+                banner_color = (0, 165, 255)
+                banner_timer = 20
+                event_log_rows.append([fid_clamped, dt_ts_current.isoformat(), "Queue Changed", "N/A", "N/A", entered_count, exited_count, curr_occ, queue_size_count])
+                prev_queue_size = queue_size_count
+
+            if curr_occ > prev_peak_occ:
+                banner_text = f"NEW PEAK OCCUPANCY = {curr_occ}"
+                banner_color = (255, 0, 255)
+                banner_timer = 20
+                event_log_rows.append([fid_clamped, dt_ts_current.isoformat(), "Peak Occupancy Updated", "N/A", "N/A", entered_count, exited_count, curr_occ, queue_size_count])
+                prev_peak_occ = curr_occ
+
+            # Draw polygon debug overlay
             for zone_name, poly_pts in zone_mapper.zones.items():
                 pts_arr = np.array(poly_pts, np.int32).reshape((-1, 1, 2))
                 cv2.polylines(overlay, [pts_arr], isClosed=True, color=(100, 100, 100), thickness=1)
-                # Label the zone name near the first vertex, clamped within image
                 cv2.putText(overlay, zone_name, (int(max(5, poly_pts[0][0])), int(max(15, poly_pts[0][1]))), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (140, 140, 140), 1)
 
-            drawn_label_ys = [] # To prevent labels overlapping vertically
-
+            drawn_label_ys = [] # Prevent label overlap
             for token, bbox, is_new in tracks:
                 x1, y1, x2, y2 = [int(v) for v in bbox]
                 is_staff = token_is_staff.get(token, 0)
-                
                 visit = visit_manager.get_visit(token)
                 state_str = visit.current_state if visit else "UNKNOWN"
                 zone_str = visit.current_zone if visit else "None"
-                duration = int((dt_ts_current - visit.entry_time).total_seconds()) if visit else 0
+                
+                # Check active journey details (Task 2)
+                matching_j = None
+                for j in journey_manager.journeys:
+                    if token in j.active_tracker_ids and j.status == "active":
+                        matching_j = j
+                        break
+                if matching_j:
+                    jid_str = matching_j.journey_id[:8]
+                    zone_str = matching_j.current_zone
+                    state_str = matching_j.state
+                    label_text = f"Trk {token} | J: {jid_str} | Z: {zone_str} | St: {state_str}"
+                else:
+                    label_text = f"Trk {token} | Zone: {zone_str} | State: {state_str}"
                 
                 color = (0, 255, 100) if is_staff else (0, 165, 255)
-                role = "STAFF" if is_staff else "GUEST"
-                
-                # Draw rounded-like box corners
+                # Bounding box corners
                 cv2.rectangle(overlay, (x1, y1), (x1+15, y1+2), color, -1)
                 cv2.rectangle(overlay, (x1, y1), (x1+2, y1+15), color, -1)
                 cv2.rectangle(overlay, (x2-15, y2-2), (x2, y2), color, -1)
                 cv2.rectangle(overlay, (x2-2, y2-15), (x2, y2), color, -1)
 
-                # Draw centroid trail
                 pts = list(centroid_history.get(token, []))
                 for i in range(1, len(pts)):
                     thickness = int(np.sqrt(10 / float(i + 1)) * 2.0)
                     cv2.line(overlay, pts[i - 1], pts[i], color, thickness)
                 
-                # Draw text label with clutter avoidance, contrast, clamping, size reduction
-                label_text = f"{role} | {zone_str} | {state_str} | {duration}s"
                 font_scale = 0.35
                 (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
-                
-                # Position label above the box y1, clamp inside frame
                 lx = max(0, min(x1, w - tw - 10))
                 ly = y1 - 10
-                
-                # Anti-overlap vertical placement packing
                 while any(abs(ly - dy) < 18 for dy in drawn_label_ys):
                     ly -= 18
                 ly = max(th + 5, min(ly, h - 5))
                 drawn_label_ys.append(ly)
-
                 cv2.rectangle(overlay, (lx, ly - th - 6), (lx + tw + 8, ly + 2), (0, 0, 0), -1)
                 cv2.putText(overlay, label_text, (lx + 4, ly - 2), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1)
+
+            # Draw Telemetry HUD Card (Task 2 & 3)
+            hud_x, hud_y = w - 260, 20
+            cv2.rectangle(overlay, (hud_x, hud_y), (hud_x + 240, hud_y + 170), (0, 0, 0), -1)
+            cv2.rectangle(overlay, (hud_x, hud_y), (hud_x + 240, hud_y + 170), (100, 100, 100), 1)
+            cv2.putText(overlay, f"Frame: {fid_clamped}", (hud_x + 10, hud_y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+            cv2.putText(overlay, f"Guests Entered: {entered_count}", (hud_x + 10, hud_y + 55), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+            cv2.putText(overlay, f"Guests Exited: {exited_count}", (hud_x + 10, hud_y + 85), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1)
+            cv2.putText(overlay, f"Current Occupancy: {curr_occ}", (hud_x + 10, hud_y + 115), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 165, 0), 1)
+            cv2.putText(overlay, f"Queue Length: {queue_size_count}", (hud_x + 10, hud_y + 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+
+            # Highlight Event Banners (Task 3)
+            if banner_text and banner_timer > 0:
+                banner_timer -= 1
+                bx1, by1 = int(w * 0.15), int(h * 0.4)
+                bx2, by2 = int(w * 0.85), int(h * 0.55)
+                cv2.rectangle(overlay, (bx1, by1), (bx2, by2), (0, 0, 0), -1)
+                cv2.rectangle(overlay, (bx1, by1), (bx2, by2), banner_color, 2)
+                text_scale = 1.1
+                (txw, txh), _ = cv2.getTextSize(banner_text, cv2.FONT_HERSHEY_SIMPLEX, text_scale, 3)
+                tx = bx1 + (bx2 - bx1 - txw) // 2
+                ty = by1 + (by2 - by1 + txh) // 2
+                cv2.putText(overlay, banner_text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, text_scale, banner_color, 3)
 
             # Apply transparency
             frame = cv2.addWeighted(overlay, 0.75, frame, 0.25, 0)
             
             # Update state engine
             journey_update_ms = (time.time() - t_journey_start) * 1000.0
-            
             state_engine.accumulate_heatmap_points(tracks, token_is_staff)
             state_engine.update_performance({
                 "yolo_inference_time_ms": round(yolo_ms, 2),
@@ -775,36 +857,13 @@ for _vid, _cam in VIDEOS:
             })
             state_engine.process_frame_state(dt_ts_current, fid, tracks, token_is_staff)
             
-            # Update Intelligence Layer
             rose.refresh()
             snapshot = rose.get_current_snapshot()
             decisions = intel.evaluate_snapshot(snapshot)
-            
             final_snapshot = snapshot
             final_decisions = decisions
 
-            # Update Rich Dashboard
             live.update(build_layout(snapshot, state_engine), refresh=True)
-            
-            # Record per-frame stats (Step 4)
-            # Clamp frame index (Phase 2)
-            fid_clamped = min(fid, total_frames)
-
-            # Record per-frame stats (Step 4)
-            active_tables_count = len(set(j.table_id for j in journey_manager.journeys if j.status == "active" and j.table_id is not None))
-            
-            # Geometric queue size count (Phase 4)
-            queue_size_count = 0
-            queue_members_list = []
-            for token, bbox, is_new in tracks:
-                if token_is_staff.get(token, 0) != 1:
-                    zone = zone_mapper.get_zone_for_bbox(bbox)
-                    if zone in ("Queue", "Waiting Area", "Waiting/Reception Area"):
-                        queue_size_count += 1
-                        for j in journey_manager.journeys:
-                            if token in j.active_tracker_ids and j.status == "active":
-                                queue_members_list.append(j.journey_id)
-                                break
             
             frame_stats.append({
                 "frame": fid_clamped,
@@ -818,7 +877,6 @@ for _vid, _cam in VIDEOS:
             
             # Persist frame occupancies (Phase 5)
             active_j_ids = ",".join(j.journey_id for j in journey_manager.journeys if j.status == "active" and j.current_zone != "OUTSIDE")
-            curr_occ = sum(1 for j in journey_manager.journeys if j.status == "active" and j.current_zone != "OUTSIDE")
             DB.execute("INSERT OR REPLACE INTO frame_occupancies (frame, camera_id, occupancy, active_journey_ids) VALUES (?, ?, ?, ?)", (fid_clamped, _cam, curr_occ, active_j_ids))
             
             # Persist frame queues
@@ -856,8 +914,30 @@ for _vid, _cam in VIDEOS:
                 pass
 
     if writer:
+        # Append summary freeze-frame slide (Task 7)
+        summary_slide = np.zeros((h_vid, w_vid, 3), dtype=np.uint8)
+        cv2.rectangle(summary_slide, (20, 20), (w_vid-20, h_vid-20), (50, 50, 50), 2)
+        cv2.putText(summary_slide, "AURIKA EXECUTIVE SUMMARY", (int(w_vid * 0.15), 80), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
+        cv2.putText(summary_slide, f"Guests Entered: {entered_count}", (int(w_vid * 0.2), 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(summary_slide, f"Guests Exited: {exited_count}", (int(w_vid * 0.2), 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(summary_slide, f"Current Occupancy: {curr_occ}", (int(w_vid * 0.2), 260), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(summary_slide, f"Peak Occupancy: {max_occ_seen}", (int(w_vid * 0.2), 310), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(summary_slide, f"Maximum Queue Length: {max_q_seen}", (int(w_vid * 0.2), 360), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(summary_slide, f"Tables Occupied: {active_tables_count}", (int(w_vid * 0.2), 410), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        for _ in range(90): # 3.0 seconds slide show
+            writer.write(summary_slide)
         writer.release()
         writer = None
+
+    # Write event_log.csv
+    import csv
+    event_log_path = f"runs/{video_name}/demo_final/event_log.csv"
+    os.makedirs(os.path.dirname(event_log_path), exist_ok=True)
+    with open(event_log_path, "w", newline="") as f:
+        writer_log = csv.writer(f)
+        writer_log.writerow(["Frame", "Time", "Event", "Journey ID", "Track ID", "Running Entered", "Running Exited", "Running Occupancy", "Running Queue"])
+        for row in event_log_rows:
+            writer_log.writerow(row)
         
     for token, entry_ts, exit_ts in tracker.flush_all():
         visit_manager.handle_track_end(token, VIDEO_START + timedelta(seconds=exit_ts))

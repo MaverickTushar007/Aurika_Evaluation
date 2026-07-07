@@ -44,30 +44,45 @@ class BusinessIntelligenceEngine:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # --- Phase 4: Retrieve metrics exclusively from SQL ---
-        cursor.execute("SELECT COUNT(*) FROM journeys WHERE is_initial_spawn = 0 AND entry_gate != 'OUTSIDE'")
+        # --- Phase 4: Retrieve metrics exclusively from restaurant_business_events ---
+        cursor.execute("SELECT COUNT(*) FROM restaurant_business_events WHERE event_type = 'ENTERED'")
         entered_count = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM journeys WHERE is_initial_spawn = 0 AND status = 'exited'")
+        cursor.execute("SELECT COUNT(*) FROM restaurant_business_events WHERE event_type = 'EXITED'")
         exited_count = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM journeys WHERE status = 'active'")
-        active_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(DISTINCT j.journey_id) FROM journeys j WHERE j.is_initial_spawn = 1 OR j.entry_frame < 50 OR j.journey_id NOT IN (SELECT journey_id FROM restaurant_business_events WHERE event_type = 'ENTERED')")
+        initial_spawns = cursor.fetchone()[0] or 0
 
-        cursor.execute("SELECT IFNULL(MAX(occupancy), 0) FROM frame_occupancies")
-        peak_occ = cursor.fetchone()[0]
+        active_count = max(0, initial_spawns + entered_count - exited_count)
 
-        cursor.execute("SELECT IFNULL(AVG(occupancy), 0.0) FROM frame_occupancies")
-        avg_occ = cursor.fetchone()[0]
+        # Peak occupancy
+        cursor.execute("SELECT event_type FROM restaurant_business_events WHERE event_type IN ('ENTERED', 'EXITED') ORDER BY frame ASC")
+        occ = initial_spawns
+        peak_occ = occ
+        for row in cursor.fetchall():
+            if row[0] == 'ENTERED':
+                occ += 1
+            elif row[0] == 'EXITED':
+                occ -= 1
+            if occ > peak_occ:
+                peak_occ = occ
+        avg_occ = 0.0
 
-        cursor.execute("SELECT IFNULL(MAX(queue_length), 0) FROM frame_queues")
-        max_q = cursor.fetchone()[0]
+        # Peak queue
+        cursor.execute("SELECT event_type FROM restaurant_business_events WHERE event_type IN ('WAITING_START', 'WAITING_END') ORDER BY frame ASC")
+        q_len = 0
+        max_q = 0
+        for row in cursor.fetchall():
+            if row[0] == 'WAITING_START':
+                q_len += 1
+            elif row[0] == 'WAITING_END':
+                q_len -= 1
+            if q_len > max_q:
+                max_q = q_len
+        avg_q = 0.0
 
-        cursor.execute("SELECT IFNULL(AVG(queue_length), 0.0) FROM frame_queues")
-        avg_q = cursor.fetchone()[0]
-
-        cursor.execute("SELECT DISTINCT table_id FROM journeys WHERE table_id IS NOT NULL")
-        tables_occupied = [row[0] for row in cursor.fetchall()]
+        tables_occupied = []
 
         # Load database records for mapping and outputs
         journeys = []
@@ -93,16 +108,30 @@ class BusinessIntelligenceEngine:
             })
 
         events = []
-        cursor.execute("SELECT rule_id, camera, previous_zone, current_zone, journey_id, timestamp, frame FROM business_events ORDER BY frame ASC")
+        cursor.execute("SELECT frame, timestamp, event_type, journey_id, tracker_id, destination_zone, waiting_seconds, evidence_image FROM restaurant_business_events ORDER BY frame ASC")
         for row in cursor.fetchall():
+            ev_type = row[2]
+            prev_z = "OUTSIDE"
+            curr_z = "Entrance"
+            if ev_type == "WAITING_START":
+                prev_z = "Entrance"
+                curr_z = "Queue"
+            elif ev_type == "WAITING_END":
+                prev_z = "Queue"
+                curr_z = row[5] or "Dining"
+            elif ev_type == "EXITED":
+                prev_z = "Dining"
+                curr_z = "OUTSIDE"
+            
             events.append({
-                "rule_id": row[0],
-                "camera": row[1],
-                "previous_zone": self.get_semantic_zone(row[2], camera_role),
-                "current_zone": self.get_semantic_zone(row[3], camera_role),
-                "journey_id": row[4],
-                "timestamp": row[5],
-                "frame": row[6]
+                "rule_id": ev_type,
+                "camera": "cam_patio",
+                "previous_zone": prev_z,
+                "current_zone": curr_z,
+                "journey_id": row[3],
+                "timestamp": row[1],
+                "frame": row[0],
+                "waiting_seconds": row[6]
             })
 
         # --- 3. Export timeline.csv ---
@@ -144,19 +173,32 @@ class BusinessIntelligenceEngine:
         csv_path = os.path.join(self.output_dir, "customer_journeys.csv")
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Guest ID", "Entry Frame", "Entry Time", "Queue Start", "Queue End", "Table Assigned", "Dining Start", "Exit Frame", "Exit Time", "Journey Status"])
+            writer.writerow(["Guest ID", "Entry Time", "Entry Frame", "Waiting Start", "Waiting End", "Waiting Seconds", "Returned To Queue? (YES/NO)", "Number Of Queue Visits", "Exit Time", "Exit Frame", "Journey Status", "Evidence Images"])
             for j in journeys:
+                cursor.execute("SELECT timestamp FROM restaurant_business_events WHERE journey_id = ? AND event_type = 'WAITING_START' ORDER BY frame ASC", (j["journey_id"],))
+                starts = cursor.fetchall()
+                cursor.execute("SELECT timestamp, waiting_seconds FROM restaurant_business_events WHERE journey_id = ? AND event_type = 'WAITING_END' ORDER BY frame ASC", (j["journey_id"],))
+                ends = cursor.fetchall()
+                
+                waiting_start_val = starts[0][0] if starts else "N/A"
+                waiting_end_val = ends[0][0] if ends else "N/A"
+                waiting_seconds_val = sum(row[1] for row in ends) if ends else 0.0
+                queue_visits = len(starts)
+                returned_to_queue = "YES" if len(starts) > 1 else "NO"
+                
                 writer.writerow([
                     j["journey_id"],
+                    j["entry_time"],
                     j["entry_frame"] or 0,
-                    j["entry_time"],
-                    j["entry_time"],
-                    j["seated_time"],
-                    j["table_id"] or "None",
-                    j["seated_time"],
+                    waiting_start_val,
+                    waiting_end_val,
+                    f"{waiting_seconds_val:.1f}",
+                    returned_to_queue,
+                    queue_visits,
+                    j["exit_time"] or "N/A",
                     j["exit_frame"] or 100,
-                    j["exit_time"],
-                    j["status"]
+                    j["status"],
+                    f"evidence/{j['journey_id']}_entered.jpg"
                 ])
                 
         # --- 6. Export queue_analysis.csv ---

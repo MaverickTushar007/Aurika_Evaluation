@@ -28,7 +28,7 @@ class Journey:
         self.last_centroid = start_centroid
         self.previous_centroid = None
         self.last_active_time = entry_time
-        self.state = "ENTERED" # Forward-only states
+        self.state = "ENTERED"
         self.role = "guest"
         self.state_history = [(entry_time, "ENTERED", 0)]
         self.entry_frame: Optional[int] = None
@@ -45,42 +45,75 @@ class Journey:
         self.waiting_start: Optional[datetime] = None
         self.waiting_end: Optional[datetime] = None
 
+        self.centroid_history = []
+        if start_centroid:
+            self.centroid_history.append(start_centroid)
+        self.total_waiting_seconds = 0.0
+        self.waiting_visits_count = 0
+        self.returned_to_queue = False
+        self.is_dark_lighting = False
+
     def update_state(self, new_state: str, timestamp: datetime, frame_id: int):
-        states = ["UNKNOWN", "ENTERED", "RECEPTION", "WAITING", "ESCORTED", "SEATED", "ORDERING", "FOOD_SERVED", "DINING", "PAYMENT", "EXITED"]
-        if new_state not in states:
-            return
-        curr_idx = states.index(self.state)
-        new_idx = states.index(new_state)
-        if new_idx > curr_idx: # Only move forward!
-            self.state = new_state
-            self.state_history.append((timestamp, new_state, frame_id))
-            self.timeline.append({
-                "frame": frame_id,
-                "timestamp": timestamp.isoformat(),
-                "state": new_state
-            })
+        if getattr(self, "is_dark_lighting", False):
+            allowed_states = ["OUTSIDE", "ENTERED", "WAITING", "DINING", "EXITED"]
+            if new_state not in allowed_states:
+                return
             
-            # Map frames
-            if new_state == "ENTERED":
-                self.entry_frame = frame_id
-                if self.queue_start is None:
-                    self.queue_start = timestamp
-            elif new_state == "RECEPTION":
-                self.reception_frame = frame_id
-                if self.queue_start is None:
-                    self.queue_start = timestamp
-            elif new_state == "WAITING":
-                self.waiting_start_frame = frame_id
-                if self.waiting_start is None:
-                    self.waiting_start = timestamp
-            elif new_state == "SEATED":
-                self.seated_frame = frame_id
-                if self.queue_end is None:
-                    self.queue_end = timestamp
-                if self.waiting_end is None:
-                    self.waiting_end = timestamp
-            elif new_state == "EXITED":
-                self.exit_frame = frame_id
+            valid = False
+            if self.state == "OUTSIDE" and new_state == "ENTERED":
+                valid = True
+            elif self.state == "ENTERED" and new_state == "WAITING":
+                valid = True
+            elif self.state == "WAITING" and new_state in ("DINING", "EXITED"):
+                valid = True
+            elif self.state == "DINING" and new_state in ("WAITING", "EXITED"):
+                valid = True
+                
+            # Allow initial spawn logic to bypass to maintain backward compatibility
+            if self.state == "ENTERED" and new_state == "DINING":
+                valid = True
+                
+            if not valid:
+                return
+        else:
+            states = ["UNKNOWN", "ENTERED", "RECEPTION", "WAITING", "ESCORTED", "SEATED", "ORDERING", "FOOD_SERVED", "DINING", "PAYMENT", "EXITED"]
+            if new_state not in states:
+                return
+            curr_idx = states.index(self.state) if self.state in states else 0
+            new_idx = states.index(new_state)
+            if new_idx <= curr_idx:
+                return
+                
+        self.state = new_state
+        self.state_history.append((timestamp, new_state, frame_id))
+        self.timeline.append({
+            "frame": frame_id,
+            "timestamp": timestamp.isoformat(),
+            "state": new_state
+        })
+        if new_state == "ENTERED":
+            self.entry_frame = frame_id
+            self.entry_time = timestamp
+            if self.queue_start is None:
+                self.queue_start = timestamp
+        elif new_state == "RECEPTION":
+            self.reception_frame = frame_id
+            if self.queue_start is None:
+                self.queue_start = timestamp
+        elif new_state == "WAITING":
+            self.waiting_started = timestamp
+            self.waiting_start_frame = frame_id
+            if self.waiting_start is None:
+                self.waiting_start = timestamp
+        elif new_state in ("DINING", "SEATED"):
+            self.seated_frame = frame_id
+            if self.queue_end is None:
+                self.queue_end = timestamp
+            if self.waiting_end is None:
+                self.waiting_end = timestamp
+        elif new_state == "EXITED":
+            self.exit_frame = frame_id
+            self.exit_time = timestamp
 
 class JourneyManager:
     def __init__(self, db_path: str = "db/customer_intel.db", camera_id: str = "cam_entrance", total_frames: int = 999999):
@@ -94,6 +127,7 @@ class JourneyManager:
         self.last_validation_time_ms = 0.0
         self.last_rule_eval_time_ms = 0.0
         self.last_db_write_time_ms = 0.0
+        self.is_dark_lighting = (camera_id == "cam_patio" or "Dark_lighting" in db_path)
         self._init_db()
         
         # Load camera configurations
@@ -180,8 +214,36 @@ class JourneyManager:
                 duration REAL
             )
         ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS restaurant_business_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                frame INTEGER,
+                timestamp TEXT,
+                event_type TEXT,
+                journey_id TEXT,
+                tracker_id TEXT,
+                destination_zone TEXT,
+                waiting_seconds REAL,
+                evidence_image TEXT
+            )
+        ''')
         conn.commit()
         conn.close()
+
+    def log_business_event(self, frame: int, timestamp: datetime, event_type: str, journey_id: str, tracker_id: str, destination_zone: str = None, waiting_seconds: float = 0.0, evidence_image: str = None):
+        import sqlite3
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute('''
+                INSERT INTO restaurant_business_events (frame, timestamp, event_type, journey_id, tracker_id, destination_zone, waiting_seconds, evidence_image)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (frame, timestamp.isoformat(), event_type, journey_id, tracker_id, destination_zone, waiting_seconds, evidence_image))
+            conn.commit()
+            print(f"[Business Event] Logged: Frame {frame} | {event_type} | Journey {journey_id[:8]} | Track {tracker_id}")
+        except Exception as e:
+            print(f"Error logging business event: {e}")
+        finally:
+            conn.close()
 
     def find_matching_journey(self, track_id: str, zone: str, centroid: Optional[tuple], timestamp: datetime) -> Optional[Journey]:
         # Merge criteria: track disappears and new track appears nearby within 8.0s, same movement/zone
@@ -253,14 +315,26 @@ class JourneyManager:
                             
                         # Create actual Journey
                         j = Journey(track_id, timestamp, entry_gate=zone, start_centroid=centroid)
+                        j.is_dark_lighting = self.is_dark_lighting
+                        if self.is_dark_lighting:
+                            j.state = "OUTSIDE"
+                            j.state_history = [(timestamp, "OUTSIDE", frame_id)]
+                            
                         j.journey_id = temp_journey_id
                         j.role = role
                         j.entry_frame = frame_id
-                        j.timeline.append({
-                            "frame": frame_id,
-                            "timestamp": timestamp.isoformat(),
-                            "state": "ENTERED"
-                        })
+                        if self.is_dark_lighting:
+                            j.timeline.append({
+                                "frame": frame_id,
+                                "timestamp": timestamp.isoformat(),
+                                "state": "OUTSIDE"
+                            })
+                        else:
+                            j.timeline.append({
+                                "frame": frame_id,
+                                "timestamp": timestamp.isoformat(),
+                                "state": "ENTERED"
+                            })
                         self.journeys.append(j)
                         print(f"JOURNEY CREATED: New customer Journey {j.journey_id} started via Track {track_id}")
                         self.save_journey(j)
@@ -396,14 +470,26 @@ class JourneyManager:
                                 
                             # Create actual Journey
                             j = Journey(track_id, info["first_seen"], entry_gate=info["zone"], start_centroid=info["centroid"])
+                            j.is_dark_lighting = self.is_dark_lighting
+                            if self.is_dark_lighting:
+                                j.state = "OUTSIDE"
+                                j.state_history = [(info["first_seen"], "OUTSIDE", info["first_frame"])]
+                                
                             j.journey_id = temp_journey_id
                             j.role = role
                             j.entry_frame = info["first_frame"]
-                            j.timeline.append({
-                                "frame": info["first_frame"],
-                                "timestamp": info["first_seen"].isoformat(),
-                                "state": "ENTERED"
-                            })
+                            if self.is_dark_lighting:
+                                j.timeline.append({
+                                    "frame": info["first_frame"],
+                                    "timestamp": info["first_seen"].isoformat(),
+                                    "state": "OUTSIDE"
+                                })
+                            else:
+                                j.timeline.append({
+                                    "frame": info["first_frame"],
+                                    "timestamp": info["first_seen"].isoformat(),
+                                    "state": "ENTERED"
+                                })
                             self.journeys.append(j)
                             print(f"JOURNEY CREATED: New customer Journey {j.journey_id} started via confirmed Track {track_id}")
                             self.save_journey(j)
@@ -480,6 +566,63 @@ class JourneyManager:
             j.last_active_time = timestamp
             j.previous_centroid = j.last_centroid
             j.last_centroid = centroid
+            
+            # Check standing status (displacement < 8px over last 15 frames)
+            j.centroid_history.append(centroid)
+            is_standing = True
+            if len(j.centroid_history) >= 15:
+                old_c = j.centroid_history[-15]
+                dist = ((centroid[0]-old_c[0])**2 + (centroid[1]-old_c[1])**2)**0.5
+                if dist > 8.0:
+                    is_standing = False
+
+            # Business State Machine Transitions (Task 3)
+            if self.is_dark_lighting:
+                if j.state == "OUTSIDE":
+                    is_initial_spawn = (j.entry_frame is not None and j.entry_frame < 50) or (frame_id < 50)
+                    if not is_initial_spawn and zone not in ("Exit", "Dining", "UNKNOWN_ZONE") and (centroid[0] >= 800 or zone == "Entrance"):
+                        j.update_state("ENTERED", timestamp, frame_id)
+                        self.log_business_event(frame_id, timestamp, "ENTERED", j.journey_id, track_id)
+                
+                elif j.state == "ENTERED":
+                    if zone in ("Queue", "Reception") and is_standing:
+                        j.update_state("WAITING", timestamp, frame_id)
+                        self.log_business_event(frame_id, timestamp, "WAITING_START", j.journey_id, track_id)
+                    elif zone == "Dining":
+                        j.update_state("DINING", timestamp, frame_id)
+                        self.log_business_event(frame_id, timestamp, "DINING_START", j.journey_id, track_id)
+                    elif zone in ("Exit", "OUTSIDE"):
+                        j.update_state("EXITED", timestamp, frame_id)
+                        j.status = "exited"
+                        self.log_business_event(frame_id, timestamp, "EXITED", j.journey_id, track_id)
+
+                elif j.state == "WAITING":
+                    if zone == "Dining":
+                        wait_dur = (timestamp - j.waiting_started).total_seconds() if j.waiting_started else 0.0
+                        j.total_waiting_seconds += wait_dur
+                        j.waiting_visits_count += 1
+                        j.waiting_duration = j.total_waiting_seconds
+                        j.update_state("DINING", timestamp, frame_id)
+                        self.log_business_event(frame_id, timestamp, "WAITING_END", j.journey_id, track_id, destination_zone="Dining", waiting_seconds=wait_dur)
+                    elif zone in ("Exit", "OUTSIDE"):
+                        wait_dur = (timestamp - j.waiting_started).total_seconds() if j.waiting_started else 0.0
+                        j.total_waiting_seconds += wait_dur
+                        j.waiting_visits_count += 1
+                        j.waiting_duration = j.total_waiting_seconds
+                        j.update_state("EXITED", timestamp, frame_id)
+                        j.status = "exited"
+                        self.log_business_event(frame_id, timestamp, "WAITING_END", j.journey_id, track_id, destination_zone="OUTSIDE", waiting_seconds=wait_dur)
+                        self.log_business_event(frame_id, timestamp, "EXITED", j.journey_id, track_id)
+
+                elif j.state == "DINING":
+                    if zone in ("Queue", "Reception") and is_standing:
+                        j.update_state("WAITING", timestamp, frame_id)
+                        j.returned_to_queue = True
+                        self.log_business_event(frame_id, timestamp, "WAITING_START", j.journey_id, track_id)
+                    elif zone in ("Exit", "OUTSIDE"):
+                        j.update_state("EXITED", timestamp, frame_id)
+                        j.status = "exited"
+                        self.log_business_event(frame_id, timestamp, "EXITED", j.journey_id, track_id)
             
             # Zone change checks
             if zone != j.current_zone:
@@ -618,9 +761,29 @@ class JourneyManager:
                 if force_all and j.state == "SEATED" and offline_dur <= 15.0:
                     continue
                 if force_all or offline_dur > 8.0:
+                    if self.is_dark_lighting:
+                        # Business State Transitions for Swept/Lost Journey (Task 3)
+                        if j.state == "WAITING":
+                            wait_dur = (j.last_active_time - j.waiting_started).total_seconds() if j.waiting_started else 0.0
+                            j.total_waiting_seconds += wait_dur
+                            j.waiting_visits_count += 1
+                            j.waiting_duration = j.total_waiting_seconds
+                            self.log_business_event(frame_id, j.last_active_time, "WAITING_END", j.journey_id, j.active_tracker_ids[-1], destination_zone="OUTSIDE", waiting_seconds=wait_dur)
+                        
+                        if j.state != "EXITED":
+                            j.update_state("EXITED", j.last_active_time, frame_id)
+                            j.status = "exited"
+                            j.exit_frame = frame_id
+                            j.exit_time = j.last_active_time
+                            self.log_business_event(frame_id, j.last_active_time, "EXITED", j.journey_id, j.active_tracker_ids[-1])
+                    else:
+                        j.status = "exited"
+                        j.exit_time = j.last_active_time
+                        j.update_state("EXITED", j.last_active_time, frame_id)
+                        j.exit_frame = frame_id
+
                     j.status = "exited"
                     j.exit_time = j.last_active_time
-                    j.update_state("EXITED", j.last_active_time, frame_id)
                     j.exit_frame = frame_id
                     if j.seated_time and j.dining_duration == 0.0:
                         j.dining_duration = (j.last_active_time - j.seated_time).total_seconds()
