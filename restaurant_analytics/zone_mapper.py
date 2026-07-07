@@ -6,13 +6,37 @@ class ZoneMapper:
     """
     Handles floorplan zone mapping, spatial containment, and homography matrix calculations.
     """
-    def __init__(self, zones: Dict[str, List[Tuple[float, float]]], homography_matrix: Optional[List[List[float]]] = None):
+    def __init__(self, zones: Dict[str, List[Tuple[float, float]]], homography_matrix: Optional[List[List[float]]] = None, frame_size: Optional[Tuple[int, int]] = None):
         """
         zones: dict of zone_id -> list of polygon vertices (x, y)
         homography_matrix: 3x3 homography matrix list for mapping camera view to top-down coordinates
+        frame_size: Optional tuple of actual frame dimensions (width, height)
         """
-        self.zones = zones
         self.h_matrix = np.array(homography_matrix) if homography_matrix is not None else None
+        
+        # Determine canonical size of input zones
+        max_x = 0.0
+        max_y = 0.0
+        for poly in zones.values():
+            for pt in poly:
+                max_x = max(max_x, pt[0])
+                max_y = max(max_y, pt[1])
+        
+        canonical_w = 1920.0 if (max_x > 1300 or max_y > 800) else 1280.0
+        canonical_h = 1080.0 if (max_x > 1300 or max_y > 800) else 720.0
+        
+        if frame_size is not None:
+            w, h = frame_size
+            scale_x = w / canonical_w
+            scale_y = h / canonical_h
+            
+            scaled_zones = {}
+            for zone_id, poly in zones.items():
+                scaled_poly = [(float(pt[0] * scale_x), float(pt[1] * scale_y)) for pt in poly]
+                scaled_zones[zone_id] = scaled_poly
+            self.zones = scaled_zones
+        else:
+            self.zones = zones
 
     def map_pixel_to_floor(self, pixel_coord: Tuple[float, float]) -> Tuple[float, float]:
         """
@@ -30,26 +54,13 @@ class ZoneMapper:
 
     def is_inside_zone(self, point: Tuple[float, float], polygon: List[Tuple[float, float]]) -> bool:
         """
-        Ray-casting algorithm to determine if a point is inside a polygon.
+        OpenCV pointPolygonTest algorithm to determine if a point is inside a polygon.
         """
-        x, y = point
-        inside = False
-        n = len(polygon)
-        if n < 3:
+        if len(polygon) < 3:
             return False
-        
-        p1x, p1y = polygon[0]
-        for i in range(n + 1):
-            p2x, p2y = polygon[i % n]
-            if y > min(p1y, p2y):
-                if y <= max(p1y, p2y):
-                    if x <= max(p1x, p2x):
-                        if p1y != p2y:
-                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
-                        if p1x == p2x or x <= xinters:
-                            inside = not inside
-            p1x, p1y = p2x, p2y
-        return inside
+        contour = np.array(polygon, dtype=np.float32)
+        dist = cv2.pointPolygonTest(contour, (float(point[0]), float(point[1])), False)
+        return dist >= 0
 
     def get_zone_for_bbox(self, bbox: List[float]) -> Optional[str]:
         """
@@ -72,4 +83,4 @@ class ZoneMapper:
         for zone_id, polygon in sorted_zones:
             if self.is_inside_zone(target_point, polygon):
                 return zone_id
-        return "UNKNOWN_ZONE"
+        return None

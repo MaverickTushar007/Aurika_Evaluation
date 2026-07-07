@@ -1,0 +1,158 @@
+{
+    "rules": [
+        {
+            "id": "ENTRY_001",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["ENTRANCE"],
+            "from": "OUTSIDE",
+            "to": "*",
+            "journey_state": "UNKNOWN",
+            "emit": "GuestEnteredRestaurant",
+            "conditions": {}
+        },
+        {
+            "id": "ENTRY_002",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["BUFFET"],
+            "from": "OUTSIDE",
+            "to": "*",
+            "journey_state": "UNKNOWN",
+            "emit": "JoinedBuffetQueue",
+            "conditions": {}
+        },
+        {
+            "id": "ENTRY_003",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["DINING"],
+            "from": "OUTSIDE",
+            "to": "*",
+            "journey_state": "UNKNOWN",
+            "emit": "TableOccupied",
+            "conditions": {}
+        },
+        {
+            "id": "ENTRY_004",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["RECEPTION"],
+            "from": "OUTSIDE",
+            "to": "*",
+            "journey_state": "UNKNOWN",
+            "emit": "ReachedReception",
+            "conditions": {}
+        },
+        {
+            "id": "ENTRY_005",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["EXIT"],
+            "from": "OUTSIDE",
+            "to": "*",
+            "journey_state": "UNKNOWN",
+            "emit": "ExitedRestaurant",
+            "conditions": {}
+        },
+        {
+            "id": "WAIT_001",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["RECEPTION"],
+            "from": "Reception",
+            "to": "Waiting Area",
+            "journey_state": "RECEPTION",
+            "emit": "StartedWaiting",
+            "conditions": {}
+        },
+        {
+            "id": "WAIT_002",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["RECEPTION"],
+            "from": "Waiting Area",
+            "to": "Dining",
+            "journey_state": "WAITING",
+            "emit": "EscortedToTable",
+            "conditions": {}
+        },
+        {
+            "id": "TABLE_001",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["DINING"],
+            "from": "Dining",
+            "to": "Table 101",
+            "journey_state": "ENTERED",
+            "emit": "Seated",
+            "conditions": {}
+        },
+        {
+            "id": "TABLE_002",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["DINING"],
+            "from": "Dining",
+            "to": "Table 102",
+            "journey_state": "ENTERED",
+            "emit": "Seated",
+            "conditions": {}
+        },
+        {
+            "id": "TABLE_003",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["DINING"],
+            "from": "Table 101",
+            "to": "Dining",
+            "journey_state": "SEATED",
+            "emit": "LeftTable",
+            "conditions": {}
+        },
+        {
+            "id": "TABLE_004",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["DINING"],
+            "from": "Table 102",
+            "to": "Dining",
+            "journey_state": "SEATED",
+            "emit": "LeftTable",
+            "conditions": {}
+        },
+        {
+            "id": "EXIT_001",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["EXIT"],
+            "from": "Exit",
+            "to": "OUTSIDE",
+            "journey_state": "ENTERED",
+            "emit": "GuestExitedRestaurant",
+            "conditions": {}
+        },
+        {
+            "id": "BUFFET_001",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["BUFFET"],
+            "from": "Dining",
+            "to": "Queue",
+            "journey_state": "ENTERED",
+            "emit": "JoinedBuffetQueue",
+            "conditions": {}
+        },
+        {
+            "id": "BUFFET_002",
+            "enabled": true,
+            "priority": 10,
+            "camera_roles": ["BUFFET"],
+            "from": "Queue",
+            "to": "Dining",
+            "journey_state": "ENTERED",
+            "emit": "LeftBuffetQueue",
+            "conditions": {}
+        }
+    ]
+}

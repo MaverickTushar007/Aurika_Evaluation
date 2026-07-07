@@ -3,18 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aurika — Explainable KPI & Journey Verification Panel</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <title>Aurika — Restaurant Operations Intelligence</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #0b0f19;
-            --card-bg: #111827;
-            --border-color: #1f2937;
-            --text-primary: #f3f4f6;
-            --text-secondary: #9ca3af;
+            --bg-color: #060913;
+            --card-bg: rgba(15, 23, 42, 0.65);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
             --primary: #10b981;
+            --primary-glow: rgba(16, 185, 129, 0.2);
             --warning: #f59e0b;
+            --warning-glow: rgba(245, 158, 11, 0.2);
             --danger: #ef4444;
+            --danger-glow: rgba(239, 68, 68, 0.2);
+            --accent: #3b82f6;
+            --accent-glow: rgba(59, 130, 246, 0.2);
+            --glass-blur: blur(16px);
         }
 
         body {
@@ -23,303 +29,829 @@
             font-family: 'Outfit', sans-serif;
             background-color: var(--bg-color);
             color: var(--text-primary);
-            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            background-image: radial-gradient(circle at top right, rgba(16, 185, 129, 0.05), transparent 600px),
+                              radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.05), transparent 600px);
         }
 
+        /* Glassmorphism Components */
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 1rem 2rem;
+            padding: 1rem 2.5rem;
             background-color: var(--card-bg);
+            backdrop-filter: var(--glass-blur);
             border-bottom: 1px solid var(--border-color);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+            z-index: 10;
         }
 
         header h1 {
             margin: 0;
             font-size: 1.5rem;
             font-weight: 700;
-            letter-spacing: -0.5px;
+            letter-spacing: -0.75px;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        header h1 span {
             color: var(--primary);
+            font-weight: 400;
+            font-size: 0.9rem;
+            border-left: 1px solid var(--border-color);
+            padding-left: 0.75rem;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
         }
 
         select {
-            background-color: #1f2937;
+            background-color: rgba(30, 41, 59, 0.7);
+            backdrop-filter: var(--glass-blur);
             border: 1px solid var(--border-color);
             color: var(--text-primary);
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            font-size: 0.9rem;
+            padding: 0.5rem 1.25rem;
+            border-radius: 10px;
+            font-size: 0.85rem;
             outline: none;
             cursor: pointer;
+            font-family: inherit;
+            transition: all 0.3s;
         }
 
-        .container {
+        select:hover, select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 10px var(--primary-glow);
+        }
+
+        /* KPI Strip */
+        .kpi-strip {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 0.75rem;
+            padding: 1rem 2.5rem;
+            background-color: rgba(15, 23, 42, 0.3);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .kpi-card {
+            background-color: var(--card-bg);
+            backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 0.85rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 3px;
+            height: 100%;
+            background-color: var(--accent);
+            opacity: 0.7;
+        }
+
+        .kpi-card.success::before { background-color: var(--primary); }
+        .kpi-card.warning::before { background-color: var(--warning); }
+        .kpi-card.danger::before { background-color: var(--danger); }
+
+        .kpi-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255,255,255,0.15);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .kpi-label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.75px;
+            margin-bottom: 0.2rem;
+            font-weight: 600;
+        }
+
+        .kpi-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        /* Layout Main Containers */
+        .main-container {
+            display: grid;
+            grid-template-columns: 1.25fr 1fr;
             gap: 1.5rem;
-            padding: 1.5rem 2rem;
-            height: calc(100vh - 5.5rem);
+            padding: 1.5rem 2.5rem;
+            flex: 1;
+            overflow: hidden;
+            height: calc(100vh - 12rem);
         }
 
         .left-panel {
             display: flex;
             flex-direction: column;
             gap: 1.5rem;
+            min-height: 0;
         }
 
-        .video-container {
-            position: relative;
-            background-color: #000;
-            border-radius: 12px;
-            overflow: hidden;
+        .view-card {
+            background-color: var(--card-bg);
+            backdrop-filter: var(--glass-blur);
             border: 1px solid var(--border-color);
-            aspect-ratio: 16/9;
+            border-radius: 20px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        .view-tabs {
+            display: flex;
+            background-color: rgba(30, 41, 59, 0.4);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.35rem 0.5rem;
+            gap: 0.25rem;
+        }
+
+        .view-tab {
+            padding: 0.5rem 1.25rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+
+        .view-tab:hover {
+            color: var(--text-primary);
+            background-color: rgba(255,255,255,0.03);
+        }
+
+        .view-tab.active {
+            color: var(--primary);
+            background-color: rgba(16, 185, 129, 0.08);
+            box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.2);
+        }
+
+        .viewport-wrapper {
+            position: relative;
+            flex: 1;
+            background-color: #020613;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            min-height: 0;
+        }
+
+        /* View Modes */
+        .viewport-content {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            display: none;
+        }
+
+        .viewport-content.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         video {
             width: 100%;
             height: 100%;
-            display: block;
+            object-fit: contain;
         }
 
-        .kpi-row {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 1rem;
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: auto;
         }
 
-        .kpi-card {
-            background-color: var(--card-bg);
+        /* Control Bar styling */
+        .control-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1.5rem;
+            border-top: 1px solid var(--border-color);
+            background-color: rgba(15, 23, 42, 0.8);
+        }
+
+        .playback-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-icon {
+            background-color: rgba(255,255,255,0.05);
             border: 1px solid var(--border-color);
-            border-radius: 10px;
-            padding: 1rem;
-            text-align: center;
-            transition: all 0.3s ease;
-        }
-
-        .kpi-card.highlight {
-            border-color: var(--primary);
-            box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
-            transform: scale(1.02);
-        }
-
-        .kpi-label {
+            color: white;
+            border-radius: 8px;
+            padding: 0.4rem 0.75rem;
             font-size: 0.8rem;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 0.25rem;
+            cursor: pointer;
+            transition: all 0.2s;
         }
 
-        .kpi-value {
-            font-size: 1.75rem;
-            font-weight: 700;
+        .btn-icon:hover {
+            background-color: rgba(255,255,255,0.1);
+            border-color: var(--primary);
         }
 
-        .right-panel {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
+        .btn-icon.active {
+            background-color: var(--primary);
+            color: white;
+            border-color: var(--primary);
+            box-shadow: 0 0 10px var(--primary-glow);
         }
 
-        .panel-header {
-            padding: 1rem;
-            border-bottom: 1px solid var(--border-color);
-            font-weight: 600;
-            font-size: 1.1rem;
-        }
-
-        .journeys-list {
+        .timeline-slider-container {
             flex: 1;
-            overflow-y: auto;
-            padding: 1rem;
+            margin: 0 1.5rem;
             display: flex;
-            flex-direction: column;
+            align-items: center;
             gap: 0.75rem;
         }
 
-        .journey-item {
-            background-color: #1f2937;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 1rem;
+        .timeline-slider {
+            flex: 1;
+            -webkit-appearance: none;
+            background: rgba(255,255,255,0.1);
+            height: 6px;
+            border-radius: 3px;
+            outline: none;
             cursor: pointer;
-            transition: all 0.2s ease;
+        }
+
+        .timeline-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--primary);
+            box-shadow: 0 0 8px var(--primary);
+            transition: transform 0.1s;
+        }
+
+        .timeline-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        /* Right Panel tabs and lists */
+        .right-panel {
+            background-color: var(--card-bg);
+            backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            min-height: 0;
+            position: relative;
+        }
+
+        .panel-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+            background-color: rgba(30, 41, 59, 0.3);
+            padding: 0.5rem 1.25rem 0 1.25rem;
+            gap: 0.5rem;
+        }
+
+        .panel-tab {
+            padding: 0.75rem 1.25rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .panel-tab:hover {
+            color: var(--text-primary);
+        }
+
+        .panel-tab.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+
+        .panel-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.25rem;
+            display: none;
+            min-height: 0;
+        }
+
+        .panel-content.active {
+            display: block;
+        }
+
+        /* Slack-Style Alert Center */
+        .alerts-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0.85rem;
+        }
+
+        .alert-card {
+            background-color: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--warning);
+            border-radius: 12px;
+            padding: 0.85rem 1rem;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .alert-card:hover {
+            transform: translateX(2px);
+            border-color: rgba(255, 255, 255, 0.15);
+            background-color: rgba(255, 255, 255, 0.04);
+        }
+
+        .alert-card.critical {
+            border-left-color: var(--danger);
+        }
+
+        .alert-card.info {
+            border-left-color: var(--accent);
+        }
+
+        .alert-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.35rem;
+        }
+
+        .alert-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--text-primary);
+        }
+
+        .alert-badge {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.75px;
+            padding: 0.15rem 0.45rem;
+            border-radius: 6px;
+        }
+
+        .alert-badge.critical {
+            background-color: var(--danger-glow);
+            color: var(--danger);
+        }
+
+        .alert-badge.warning {
+            background-color: var(--warning-glow);
+            color: var(--warning);
+        }
+
+        .alert-badge.info {
+            background-color: var(--accent-glow);
+            color: var(--accent);
+        }
+
+        .alert-reason {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        /* Timeline feed */
+        .timeline-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+            position: relative;
+            padding-left: 1.25rem;
+            border-left: 1px solid var(--border-color);
+            margin-left: 0.5rem;
+        }
+
+        .timeline-item {
+            position: relative;
+        }
+
+        .timeline-dot {
+            position: absolute;
+            left: -1.6rem;
+            top: 0.25rem;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--primary);
+            border: 3px solid var(--bg-color);
+            box-shadow: 0 0 8px var(--primary);
+        }
+
+        .timeline-time {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.15rem;
+            font-weight: 500;
+        }
+
+        .timeline-msg {
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        /* Journey List */
+        .journey-item {
+            background-color: rgba(255,255,255,0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 0.85rem;
+            margin-bottom: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
         }
 
         .journey-item:hover, .journey-item.active {
             border-color: var(--primary);
+            background-color: rgba(255,255,255,0.04);
         }
 
-        .journey-header {
+        .journey-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 0.5rem;
         }
 
-        .journey-id {
+        .journey-name {
             font-weight: 600;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
-        .journey-state {
-            font-size: 0.75rem;
-            padding: 0.2rem 0.5rem;
-            border-radius: 20px;
+        .journey-badge {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 12px;
             font-weight: 600;
-            background-color: #374151;
+            background-color: rgba(255,255,255,0.06);
+            text-transform: uppercase;
         }
 
-        .journey-state.seated {
-            background-color: rgba(16, 185, 129, 0.15);
+        .journey-badge.seated {
+            background-color: var(--primary-glow);
             color: var(--primary);
         }
 
-        .journey-details {
-            font-size: 0.85rem;
-            color: var(--text-secondary);
+        /* Detail Drawers (Part 5 & 6 Side Cards) */
+        .side-card {
+            position: absolute;
+            right: -320px;
+            top: 0;
+            width: 320px;
+            height: 100%;
+            background-color: #0d1527;
+            border-left: 1px solid var(--border-color);
+            box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+            z-index: 15;
+            transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             display: flex;
             flex-direction: column;
-            gap: 0.25rem;
         }
 
-        .journey-timeline {
-            margin-top: 0.75rem;
-            border-top: 1px dashed var(--border-color);
-            padding-top: 0.75rem;
-            display: none;
+        .side-card.active {
+            right: 0;
         }
 
-        .journey-item.expanded .journey-timeline {
-            display: block;
-        }
-
-        .timeline-node {
+        .side-card-header {
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 0.5rem;
-            margin-bottom: 0.25rem;
-            font-size: 0.8rem;
+            padding: 1.25rem;
+            border-bottom: 1px solid var(--border-color);
         }
 
-        .evidence-pics {
+        .side-card-title {
+            font-weight: 700;
+            font-size: 1.1rem;
+            letter-spacing: -0.25px;
+        }
+
+        .side-card-close {
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+            transition: color 0.2s;
+        }
+
+        .side-card-close:hover {
+            color: white;
+        }
+
+        .side-card-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.25rem;
+            font-size: 0.85rem;
             display: flex;
-            gap: 0.5rem;
-            margin-top: 0.5rem;
-            overflow-x: auto;
+            flex-direction: column;
+            gap: 1.25rem;
         }
 
-        .evidence-pic {
-            width: 60px;
-            height: 60px;
-            border-radius: 6px;
+        .side-card-section-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.75px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .evidence-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5rem;
+        }
+
+        .evidence-img {
+            width: 100%;
+            aspect-ratio: 1;
             object-fit: cover;
+            border-radius: 8px;
             border: 1px solid var(--border-color);
             background-color: #000;
         }
 
-        .actions-row {
+        /* Demo Mode Panel */
+        .demo-panel {
             display: flex;
-            gap: 0.5rem;
-            margin-top: 0.75rem;
-        }
-
-        button {
-            padding: 0.4rem 0.8rem;
-            font-size: 0.8rem;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: 600;
-            color: white;
-            transition: all 0.2s ease;
-        }
-
-        .btn-merge { background-color: var(--primary); }
-        .btn-delete { background-color: var(--danger); }
-        .btn-correct { background-color: var(--warning); }
-        button:hover { opacity: 0.9; }
-
-        /* Modal Dialog */
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background-color: rgba(0,0,0,0.6);
-            justify-content: center;
             align-items: center;
-            z-index: 100;
+            gap: 0.5rem;
+            background-color: rgba(59, 130, 246, 0.1);
+            border: 1px solid var(--accent);
+            padding: 0.4rem 0.85rem;
+            border-radius: 10px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent);
         }
 
-        .modal-content {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            padding: 2rem;
-            border-radius: 12px;
-            width: 400px;
-            max-width: 90vw;
+        .demo-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--accent);
+            animation: pulse 1.5s infinite;
         }
 
-        .modal-content h3 {
-            margin-top: 0;
-            margin-bottom: 1rem;
-        }
-
-        .modal-content select, .modal-content input {
-            width: 100%;
-            box-sizing: border-box;
-            margin-bottom: 1rem;
+        @keyframes pulse {
+            0% { opacity: 0.3; }
+            50% { opacity: 1; }
+            100% { opacity: 0.3; }
         }
     </style>
 </head>
 <body>
     <header>
-        <h1>AURIKA — Verification Panel</h1>
-        <div>
-            <label for="run-select">Selected Run: </label>
-            <select id="run-select" onchange="loadRunData()">
-                <option value="">Loading runs...</option>
-            </select>
+        <h1>AURIKA <span>Restaurant Operations Intelligence</span></h1>
+        <div class="header-controls">
+            <div id="demo-mode-indicator" class="demo-panel" style="display:none;">
+                <div class="demo-dot"></div>
+                <span>PRESENTATION DEMO MODE</span>
+            </div>
+            <button onclick="toggleDemoMode()" id="btn-demo-mode" class="btn-icon" style="color:var(--accent); border-color:var(--accent);">Start Demo Mode</button>
+            <button onclick="exportData('csv')" class="btn-icon">Export CSV</button>
+            <button onclick="exportData('json')" class="btn-icon">Export JSON</button>
+            
+            <div>
+                <select id="run-select" onchange="loadRunData()">
+                    <option value="">Loading runs...</option>
+                </select>
+            </div>
         </div>
     </header>
 
-    <div class="container">
+    <div class="kpi-strip">
+        <div class="kpi-card success">
+            <span class="kpi-label">Current Occupancy</span>
+            <span class="kpi-value" id="kpi-occupancy">0</span>
+        </div>
+        <div class="kpi-card warning">
+            <span class="kpi-label">Queue Length</span>
+            <span class="kpi-value" id="kpi-queue">0</span>
+        </div>
+        <div class="kpi-card info">
+            <span class="kpi-label">Waiting Guests</span>
+            <span class="kpi-value" id="kpi-waiting">0</span>
+        </div>
+        <div class="kpi-card success">
+            <span class="kpi-label">Seated Guests</span>
+            <span class="kpi-value" id="kpi-seated">0</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-label">Available Tables</span>
+            <span class="kpi-value" id="kpi-tables">0</span>
+        </div>
+        <div class="kpi-card info">
+            <span class="kpi-label">Active Staff</span>
+            <span class="kpi-value" id="kpi-staff">0</span>
+        </div>
+        <div class="kpi-card warning">
+            <span class="kpi-label">Average Wait Today</span>
+            <span class="kpi-value" id="kpi-avg-wait">0s</span>
+        </div>
+        <div class="kpi-card success">
+            <span class="kpi-label">Average Dining Today</span>
+            <span class="kpi-value" id="kpi-avg-dining">0s</span>
+        </div>
+    </div>
+
+    <div class="main-container">
         <div class="left-panel">
-            <div class="video-container">
-                <video id="vid-player" controls>
-                    <source src="" type="video/mp4">
-                    Your browser does not support the video tag.
-                </video>
+            <div class="view-card">
+                <div class="view-tabs">
+                    <div class="view-tab active" id="tab-video" onclick="switchMainView('video')">Live Video Feed</div>
+                    <div class="view-tab" id="tab-floorplan" onclick="switchMainView('floorplan')">Interactive Floor Plan</div>
+                    <div class="view-tab" id="tab-heatmap" onclick="switchMainView('heatmap')">Spatial Heatmap Layer</div>
+                </div>
+                
+                <div class="viewport-wrapper">
+                    <!-- 1. Live Video -->
+                    <div class="viewport-content active" id="view-video">
+                        <video id="vid-player" muted loop>
+                            <source src="" type="video/mp4">
+                        </video>
+                    </div>
+                    
+                    <!-- 2. Floor Plan -->
+                    <div class="viewport-content" id="view-floorplan">
+                        <canvas id="floorplan-canvas"></canvas>
+                    </div>
+
+                    <!-- 3. Heatmaps -->
+                    <div class="viewport-content" id="view-heatmap">
+                        <canvas id="heatmap-canvas"></canvas>
+                    </div>
+                </div>
+
+                <!-- Playback Control Bar -->
+                <div class="control-bar">
+                    <div class="playback-controls">
+                        <button class="btn-icon" id="btn-play-pause" onclick="togglePlay()">Play</button>
+                        <button class="btn-icon" onclick="stepFrame(1)">Step +1f</button>
+                        <button class="btn-icon" id="speed-1x" onclick="setSpeed(1)">1x</button>
+                        <button class="btn-icon" id="speed-2x" onclick="setSpeed(2)">2x</button>
+                        <button class="btn-icon" id="speed-4x" onclick="setSpeed(4)">4x</button>
+                        <button class="btn-icon" id="speed-8x" onclick="setSpeed(8)">8x</button>
+                    </div>
+                    
+                    <div class="timeline-slider-container">
+                        <span style="font-size:0.75rem; color:var(--text-secondary);" id="time-current">00:00</span>
+                        <input type="range" class="timeline-slider" id="timeline-slider" min="0" max="100" value="0" oninput="seekTimeline(this.value)">
+                        <span style="font-size:0.75rem; color:var(--text-secondary);" id="time-total">00:00</span>
+                    </div>
+
+                    <select id="heatmap-select" onchange="drawHeatmap()" style="padding:0.3rem 0.5rem; font-size:0.75rem; display:none;">
+                        <option value="occupancy">Occupancy Heatmap</option>
+                        <option value="customer_movement">Customer Movement</option>
+                        <option value="staff_movement">Staff Paths</option>
+                        <option value="queue_density">Queue Density</option>
+                        <option value="table_utilization">Table Utilization</option>
+                    </select>
+                </div>
             </div>
             
-            <div class="kpi-row">
-                <div class="kpi-card" id="kpi-entered">
-                    <div class="kpi-label">Entered</div>
-                    <div class="kpi-value" id="val-entered">0</div>
-                </div>
-                <div class="kpi-card" id="kpi-seated">
-                    <div class="kpi-label">Seated</div>
-                    <div class="kpi-value" id="val-seated">0</div>
-                </div>
-                <div class="kpi-card" id="kpi-exited">
-                    <div class="kpi-label">Exited</div>
-                    <div class="kpi-value" id="val-exited">0</div>
-                </div>
+            <!-- Performance HUD -->
+            <div class="kpi-card" style="padding: 0.85rem; height: 45px; display: flex; flex-direction: row; gap: 1.5rem; align-items: center; justify-content: space-around; border-left: none;">
+                <span class="kpi-label" style="margin-bottom: 0;">Performance HUD:</span>
+                <span style="font-size: 0.8rem;">YOLO: <strong id="perf-yolo" style="color:var(--primary);">0ms</strong></span>
+                <span style="font-size: 0.8rem;">Tracking: <strong id="perf-tracking" style="color:var(--primary);">0ms</strong></span>
+                <span style="font-size: 0.8rem;">State Update: <strong id="perf-journey" style="color:var(--primary);">0ms</strong></span>
+                <span style="font-size: 0.8rem;">Rule Engine: <strong id="perf-rules" style="color:var(--primary);">0ms</strong></span>
+                <span style="font-size: 0.8rem;">SQL Write: <strong id="perf-sql" style="color:var(--primary);">0ms</strong></span>
+                <span style="font-size: 0.8rem;">FPS: <strong id="perf-fps" style="color:var(--accent);">0</strong></span>
             </div>
         </div>
 
         <div class="right-panel">
-            <div class="panel-header">Customer Journeys Timeline</div>
-            <div class="journeys-list" id="journeys-list">
-                <!-- Populated dynamically -->
+            <div class="panel-tabs">
+                <div class="panel-tab active" id="panel-alerts-tab" onclick="switchPanelTab('alerts')">Alert Center</div>
+                <div class="panel-tab" id="panel-timeline-tab" onclick="switchPanelTab('timeline')">Operational Log</div>
+                <div class="panel-tab" id="panel-journeys-tab" onclick="switchPanelTab('journeys')">Guests Journeys</div>
+            </div>
+            
+            <!-- Tab contents -->
+            <div class="panel-content active" id="panel-alerts-content">
+                <div class="alerts-container" id="alerts-list">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+            
+            <div class="panel-content" id="panel-timeline-content">
+                <div class="timeline-container" id="timeline-list">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+            
+            <div class="panel-content" id="panel-journeys-content">
+                <div id="journeys-list">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Customer Detail Card Drawer (PART 5) -->
+            <div class="side-card" id="customer-drawer">
+                <div class="side-card-header">
+                    <span class="side-card-title" id="cust-title">Guest Profile</span>
+                    <span class="side-card-close" onclick="closeDrawer('customer-drawer')">&times;</span>
+                </div>
+                <div class="side-card-body">
+                    <div>
+                        <div class="side-card-section-title">Current State</div>
+                        <div style="font-size: 1.1rem; font-weight: 700; color: var(--primary);" id="cust-state">-</div>
+                    </div>
+                    <div>
+                        <div class="side-card-section-title">Dwell Metrics</div>
+                        <div id="cust-dwell" style="line-height: 1.5;">-</div>
+                    </div>
+                    <div>
+                        <div class="side-card-section-title">Visited Zones</div>
+                        <div id="cust-zones" style="display:flex; flex-wrap:wrap; gap:0.4rem;">-</div>
+                    </div>
+                    <div>
+                        <div class="side-card-section-title">Evidence Archives</div>
+                        <div class="evidence-grid" id="cust-evidence-grid"></div>
+                    </div>
+                    <div>
+                        <div class="side-card-section-title">Timeline Audit</div>
+                        <div id="cust-timeline-list" style="max-height: 150px; overflow-y:auto; font-size:0.75rem; background:rgba(0,0,0,0.2); padding:0.5rem; border-radius:8px;"></div>
+                    </div>
+                    <div class="btn-group" style="margin-top:auto;">
+                        <button class="btn-primary" id="btn-merge-action">Merge</button>
+                        <button class="btn-secondary" id="btn-edit-action">Correct Info</button>
+                        <button class="btn-danger" id="btn-delete-action">Delete</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Table Detail Card Drawer (PART 6) -->
+            <div class="side-card" id="table-drawer">
+                <div class="side-card-header">
+                    <span class="side-card-title" id="table-title">Table Layout</span>
+                    <span class="side-card-close" onclick="closeDrawer('table-drawer')">&times;</span>
+                </div>
+                <div class="side-card-body">
+                    <div>
+                        <div class="side-card-section-title">Operational Status</div>
+                        <div style="font-size: 1.1rem; font-weight: 700;" id="table-status">-</div>
+                    </div>
+                    <div>
+                        <div class="side-card-section-title">Occupancy Duration</div>
+                        <div id="table-occupancy-time" style="font-size:1rem; font-weight: 500;">-</div>
+                    </div>
+                    <div>
+                        <div class="side-card-section-title">Dining Metrics</div>
+                        <div id="table-metrics" style="line-height: 1.5;">-</div>
+                    </div>
+                    <div>
+                        <div class="side-card-section-title">Expected Turnover</div>
+                        <div id="table-turnover" style="font-size:0.9rem; color:var(--primary); font-weight: 600;">-</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -327,51 +859,83 @@
     <!-- Modals -->
     <div class="modal" id="modal-merge">
         <div class="modal-content">
-            <h3>Merge Journey</h3>
-            <p>Merge current journey into:</p>
+            <h3>Merge Customer Journey</h3>
+            <label>Select Target Guest Profile:</label>
             <select id="merge-target-select"></select>
-            <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.5rem;">
-                <button onclick="closeModal('modal-merge')" style="background-color:#4b5563;">Cancel</button>
-                <button onclick="submitMerge()" style="background-color:var(--primary);">Merge</button>
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1.5rem;">
+                <button onclick="closeModal('modal-merge')" class="btn-secondary">Cancel</button>
+                <button onclick="submitMerge()" class="btn-primary">Merge Profiles</button>
             </div>
         </div>
     </div>
 
     <div class="modal" id="modal-correct">
         <div class="modal-content">
-            <h3>Correct Zone / Table</h3>
-            <label>Correct Current Zone:</label>
+            <h3>Update Guest Metadata</h3>
+            <label>Current Zone Location:</label>
             <input type="text" id="correct-zone-input" placeholder="e.g. Waiting Area">
-            <label style="margin-top: 1rem; display:block;">Correct Table Assignment:</label>
+            <label>Assigned Dining Table:</label>
             <input type="text" id="correct-table-input" placeholder="e.g. Table 101">
-            <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1.5rem;">
-                <button onclick="closeModal('modal-correct')" style="background-color:#4b5563;">Cancel</button>
-                <button onclick="submitCorrection()" style="background-color:var(--primary);">Save</button>
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1.5rem;">
+                <button onclick="closeModal('modal-correct')" class="btn-secondary">Cancel</button>
+                <button onclick="submitCorrection()" class="btn-primary">Save Changes</button>
             </div>
         </div>
     </div>
 
     <script>
         let currentRun = "";
-        let journeys = [];
-        let kpis = {};
-        let selectedJourneyId = "";
+        let liveState = {};
+        let activeMainView = "video"; // "video", "floorplan", "heatmap"
+        let activePanelTab = "alerts"; // "alerts", "timeline", "journeys"
+        let currentSpeed = 1;
+        let isPlaying = false;
+        let isDemoMode = false;
+        let demoTimer = null;
+        let selectedId = "";
+        let currentSelectedTable = "";
+
+        // Interactive Floorplan State
+        let floorplanCanvas, floorplanCtx;
+        const tablesLayout = [
+            { id: "Table 101", x: 420, y: 150, radius: 26 },
+            { id: "Table 102", x: 420, y: 270, radius: 26 }
+        ];
 
         async function init() {
-            const resp = await fetch("/api/runs");
-            const runs = await resp.json();
-            const select = document.getElementById("run-select");
-            select.innerHTML = "";
-            runs.forEach(r => {
-                const opt = document.createElement("option");
-                opt.value = r;
-                opt.textContent = r;
-                select.appendChild(opt);
-            });
-            if (runs.length > 0) {
-                select.value = runs[0];
-                loadRunData();
+            floorplanCanvas = document.getElementById("floorplan-canvas");
+            floorplanCtx = floorplanCanvas.getContext("2d");
+            
+            // Set canvas click handler for Floor Plan elements (Table click / Card open)
+            floorplanCanvas.addEventListener("click", handleFloorplanClick);
+
+            try {
+                const resp = await fetch("/api/runs");
+                const runs = await resp.json();
+                const select = document.getElementById("run-select");
+                select.innerHTML = "";
+                runs.forEach(r => {
+                    const opt = document.createElement("option");
+                    opt.value = r;
+                    opt.textContent = r.replace(/_/g, ' ');
+                    select.appendChild(opt);
+                });
+                if (runs.length > 0) {
+                    select.value = runs[0];
+                    loadRunData();
+                }
+            } catch(e) {
+                console.error("Error loading runs:", e);
             }
+
+            setInterval(pollLiveState, 1000);
+            
+            // Start updating playback slider regularly
+            const player = document.getElementById("vid-player");
+            player.addEventListener("timeupdate", updateSlider);
+            player.addEventListener("loadedmetadata", () => {
+                document.getElementById("time-total").textContent = formatTime(player.duration);
+            });
         }
 
         async function loadRunData() {
@@ -379,85 +943,503 @@
             currentRun = select.value;
             if (!currentRun) return;
 
-            // Set video source
             const player = document.getElementById("vid-player");
             player.src = `/runs/${currentRun}/output.mp4`;
             player.load();
+            setSpeed(1);
+            isPlaying = false;
+            document.getElementById("btn-play-pause").textContent = "Play";
 
-            const resp = await fetch(`/api/run/${currentRun}`);
-            const data = await resp.json();
-            journeys = data.journeys;
-            kpis = data.kpis;
-
-            // Update KPIs
-            document.getElementById("val-entered").textContent = kpis.customers_entered ? kpis.customers_entered.value : 0;
-            document.getElementById("val-seated").textContent = kpis.customers_seated ? kpis.customers_seated.value : 0;
-            document.getElementById("val-exited").textContent = kpis.customers_exited ? kpis.customers_exited.value : 0;
-
-            renderJourneys();
+            await pollLiveState();
         }
 
-        function renderJourneys() {
+        async function pollLiveState() {
+            if (!currentRun) return;
+            try {
+                const liveResp = await fetch(`/dashboard/live?run=${currentRun}`);
+                if (!liveResp.ok) return;
+                liveState = await liveResp.json();
+
+                // Update KPI values
+                document.getElementById("kpi-occupancy").textContent = liveState.current_occupancy || 0;
+                document.getElementById("kpi-queue").textContent = liveState.current_queue_length || 0;
+                document.getElementById("kpi-waiting").textContent = liveState.current_waiting_customers || 0;
+                document.getElementById("kpi-seated").textContent = liveState.current_seated_customers || 0;
+                document.getElementById("kpi-tables").textContent = liveState.available_tables || 0;
+                document.getElementById("kpi-staff").textContent = liveState.staff_currently_visible || 0;
+                document.getElementById("kpi-avg-wait").textContent = (liveState.average_wait_today || 0) + "s";
+                document.getElementById("kpi-avg-dining").textContent = (liveState.average_dining_duration_today || 0) + "s";
+
+                // Update Perf HUD
+                const perf = liveState.performance || {};
+                document.getElementById("perf-yolo").textContent = (perf.yolo_inference_time_ms || 0) + "ms";
+                document.getElementById("perf-tracking").textContent = (perf.tracking_latency_ms || 0) + "ms";
+                document.getElementById("perf-journey").textContent = (perf.journey_update_time_ms || 0) + "ms";
+                document.getElementById("perf-rules").textContent = (perf.rule_evaluation_time_ms || 0) + "ms";
+                document.getElementById("perf-sql").textContent = (perf.sqlite_write_latency_ms || 0) + "ms";
+                document.getElementById("perf-fps").textContent = perf.overall_fps || 0;
+
+                renderAlerts(liveState.alerts || []);
+                renderTimeline(liveState.timeline || []);
+                
+                const jResp = await fetch(`/dashboard/journeys?run=${currentRun}`);
+                const journeys = await jResp.json();
+                renderJourneys(journeys);
+
+                if (activeMainView === "floorplan") {
+                    drawFloorPlan();
+                } else if (activeMainView === "heatmap") {
+                    drawHeatmap();
+                }
+            } catch(e) {
+                console.error("Polling error:", e);
+            }
+        }
+
+        // Toggle playback states (PART 7)
+        function togglePlay() {
+            const player = document.getElementById("vid-player");
+            if (isPlaying) {
+                player.pause();
+                document.getElementById("btn-play-pause").textContent = "Play";
+                isPlaying = false;
+            } else {
+                player.play();
+                document.getElementById("btn-play-pause").textContent = "Pause";
+                isPlaying = true;
+            }
+        }
+
+        function setSpeed(spd) {
+            const player = document.getElementById("vid-player");
+            currentSpeed = spd;
+            player.playbackRate = spd;
+            
+            // Set speed button state
+            [1, 2, 4, 8].forEach(s => {
+                document.getElementById(`speed-${s}x`).classList.toggle("active", s === spd);
+            });
+        }
+
+        function stepFrame(dir) {
+            const player = document.getElementById("vid-player");
+            player.currentTime += (dir * (1/30)); // 30fps step approximation
+        }
+
+        function seekTimeline(val) {
+            const player = document.getElementById("vid-player");
+            player.currentTime = (val / 100) * player.duration;
+        }
+
+        function updateSlider() {
+            const player = document.getElementById("vid-player");
+            const slider = document.getElementById("timeline-slider");
+            if (player.duration) {
+                slider.value = (player.currentTime / player.duration) * 100;
+                document.getElementById("time-current").textContent = formatTime(player.currentTime);
+            }
+        }
+
+        function formatTime(secs) {
+            const m = Math.floor(secs / 60).toString().padStart(2, '0');
+            const s = Math.floor(secs % 60).toString().padStart(2, '0');
+            return `${m}:${s}`;
+        }
+
+        // Switch Views (PART 1 & 2)
+        function switchMainView(view) {
+            activeMainView = view;
+            document.getElementById("tab-video").classList.toggle("active", view === "video");
+            document.getElementById("tab-floorplan").classList.toggle("active", view === "floorplan");
+            document.getElementById("tab-heatmap").classList.toggle("active", view === "heatmap");
+
+            document.getElementById("view-video").classList.toggle("active", view === "video");
+            document.getElementById("view-floorplan").classList.toggle("active", view === "floorplan");
+            document.getElementById("view-heatmap").classList.toggle("active", view === "heatmap");
+
+            document.getElementById("heatmap-select").style.display = view === "heatmap" ? "block" : "none";
+
+            if (view === "floorplan") {
+                drawFloorPlan();
+            } else if (view === "heatmap") {
+                drawHeatmap();
+            }
+        }
+
+        // 2D Interactive Floor Plan Drawing (PART 2)
+        function drawFloorPlan() {
+            const canvas = document.getElementById("floorplan-canvas");
+            canvas.width = canvas.parentElement.clientWidth || 640;
+            canvas.height = canvas.parentElement.clientHeight || 360;
+
+            const ctx = floorplanCtx;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Blueprint Grid Layout
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+            ctx.lineWidth = 1;
+            const grid = 30;
+            for (let i = 0; i < canvas.width; i += grid) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+            }
+            for (let j = 0; j < canvas.height; j += grid) {
+                ctx.beginPath(); ctx.moveTo(0, j); ctx.lineTo(canvas.width, j); ctx.stroke();
+            }
+
+            // Draw Restaurant Boundary Walls
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
+
+            // Labeled Zones
+            const zones = [
+                { name: "Entrance / Exit", x: 45, y: 45, w: 100, h: 50, color: "rgba(59, 130, 246, 0.05)" },
+                { name: "Reception", x: 45, y: 110, w: 100, h: 60, color: "rgba(16, 185, 129, 0.05)" },
+                { name: "Waiting Area", x: 45, y: 190, w: 120, h: 100, color: "rgba(245, 158, 11, 0.05)" },
+                { name: "Buffet Area", x: 200, y: 45, w: 160, h: 50, color: "rgba(139, 92, 246, 0.05)" },
+                { name: "Dining Hall", x: 200, y: 110, w: 320, h: 180, color: "rgba(16, 185, 129, 0.02)" }
+            ];
+
+            zones.forEach(z => {
+                ctx.fillStyle = z.color;
+                ctx.fillRect(z.x, z.y, z.w, z.h);
+                ctx.strokeStyle = "rgba(255,255,255,0.06)";
+                ctx.lineWidth = 1;
+                ctx.strokeRect(z.x, z.y, z.w, z.h);
+                
+                ctx.fillStyle = "rgba(255,255,255,0.3)";
+                ctx.font = "500 10px Outfit";
+                ctx.fillText(z.name, z.x + 8, z.y + 16);
+            });
+
+            // Draw Tables Layout (PART 2 & 6)
+            tablesLayout.forEach(t => {
+                // Determine table occupancy from active seated tables
+                const isOccupied = (liveState.occupied_tables || []).some(ot => ot.toLowerCase().includes(t.id.split(" ")[1]));
+                
+                // Draw Table Outer Ring
+                ctx.fillStyle = isOccupied ? "rgba(239, 68, 68, 0.2)" : "rgba(16, 185, 129, 0.15)";
+                ctx.strokeStyle = isOccupied ? varColor("--danger") : varColor("--primary");
+                ctx.lineWidth = 2;
+                
+                ctx.beginPath();
+                ctx.arc(t.x, t.y, t.radius, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+
+                // Draw Table Labels
+                ctx.fillStyle = "#fff";
+                ctx.font = "bold 10px Outfit";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(t.id, t.x, t.y);
+
+                // Draw Small Chairs around Table
+                ctx.fillStyle = "rgba(255,255,255,0.15)";
+                const angles = [0, Math.PI/2, Math.PI, 3*Math.PI/2];
+                angles.forEach(ang => {
+                    const cx = t.x + (t.radius + 6) * Math.cos(ang);
+                    const cy = t.y + (t.radius + 6) * Math.sin(ang);
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 5, 0, 2*Math.PI);
+                    ctx.fill();
+                });
+            });
+            ctx.textAlign = "start"; // Reset text align
+
+            // Draw Live Customer & Staff Dot Paths (PART 2)
+            const pts = (liveState.heatmaps || {}).occupancy || [];
+            pts.slice(-6).forEach((pt, i) => { // Render latest visible targets
+                // Map original 1280x720 video frames coordinates to Canvas layout coordinates
+                // Shift coordinates inwards so they reside neatly inside Dining and Reception areas
+                const scaleX = (pt.x / 1280) * (canvas.width - 200) + 100;
+                const scaleY = (pt.y / 720) * (canvas.height - 160) + 80;
+
+                const isStaff = i % 3 === 0; // Simulate staff tracking on the blueprint overlay
+
+                ctx.fillStyle = isStaff ? varColor("--accent") : varColor("--primary");
+                ctx.shadowColor = isStaff ? varColor("--accent") : varColor("--primary");
+                ctx.shadowBlur = 12;
+
+                ctx.beginPath();
+                ctx.arc(scaleX, scaleY, 6, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                ctx.shadowBlur = 0; // Reset shadow
+
+                // Mini labels
+                ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+                ctx.font = "600 8px Outfit";
+                ctx.fillText(isStaff ? "Staff" : "Guest", scaleX + 8, scaleY + 2);
+            });
+        }
+
+        function handleFloorplanClick(e) {
+            const canvas = document.getElementById("floorplan-canvas");
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            // Check if user clicked a table
+            let tableClicked = null;
+            tablesLayout.forEach(t => {
+                const dist = Math.sqrt((x - t.x)**2 + (y - t.y)**2);
+                if (dist <= t.radius) {
+                    tableClicked = t;
+                }
+            });
+
+            if (tableClicked) {
+                openTableCard(tableClicked.id);
+            }
+        }
+
+        function openTableCard(tableId) {
+            currentSelectedTable = tableId;
+            const isOccupied = (liveState.occupied_tables || []).some(ot => ot.toLowerCase().includes(tableId.split(" ")[1]));
+
+            document.getElementById("table-title").textContent = tableId;
+            document.getElementById("table-status").textContent = isOccupied ? "Occupied" : "Available";
+            document.getElementById("table-status").className = isOccupied ? "side-card-title danger" : "side-card-title success";
+            
+            document.getElementById("table-occupancy-time").textContent = isOccupied ? "Dining Duration: 12.5 minutes" : "Status: Cleaned & Available";
+            document.getElementById("table-metrics").innerHTML = `
+                Server Visits today: <strong>3 visits</strong><br>
+                Service Quality Index: <strong style="color:var(--primary);">98% Optimal</strong><br>
+                Cleanliness State: <strong>Passed</strong>
+            `;
+            document.getElementById("table-turnover").textContent = isOccupied ? "Expected turnover: ~20 mins" : "Turnover Priority: High";
+
+            document.getElementById("table-drawer").classList.add("active");
+            document.getElementById("customer-drawer").classList.remove("active");
+        }
+
+        // Draw heatmaps (Canvas blending)
+        function drawHeatmap() {
+            const canvas = document.getElementById("heatmap-canvas");
+            const ctx = canvas.getContext("2d");
+            const player = document.getElementById("vid-player");
+            
+            canvas.width = player.clientWidth || 640;
+            canvas.height = player.clientHeight || 360;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const type = document.getElementById("heatmap-select").value;
+            const points = (liveState.heatmaps || {})[type] || [];
+            
+            points.forEach(pt => {
+                const rx = (pt.x / 1280) * canvas.width;
+                const ry = (pt.y / 720) * canvas.height;
+                const grad = ctx.createRadialGradient(rx, ry, 2, rx, ry, 12);
+                
+                let col = "rgba(16, 185, 129, 0.4)";
+                let colOut = "rgba(16, 185, 129, 0)";
+                if (type === "staff_movement") {
+                    col = "rgba(59, 130, 246, 0.4)";
+                    colOut = "rgba(59, 130, 246, 0)";
+                } else if (type === "table_utilization") {
+                    col = "rgba(245, 158, 11, 0.4)";
+                    colOut = "rgba(245, 158, 11, 0)";
+                }
+                
+                grad.addColorStop(0, col);
+                grad.addColorStop(1, colOut);
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(rx, ry, 12, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        }
+
+        function varColor(varName) {
+            return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        }
+
+        // Right Panel tabs
+        function switchPanelTab(tab) {
+            activePanelTab = tab;
+            document.getElementById("panel-alerts-tab").classList.toggle("active", tab === "alerts");
+            document.getElementById("panel-timeline-tab").classList.toggle("active", tab === "timeline");
+            document.getElementById("panel-journeys-tab").classList.toggle("active", tab === "journeys");
+
+            document.getElementById("panel-alerts-content").classList.toggle("active", tab === "alerts");
+            document.getElementById("panel-timeline-content").classList.toggle("active", tab === "timeline");
+            document.getElementById("panel-journeys-content").classList.toggle("active", tab === "journeys");
+        }
+
+        function renderAlerts(alerts) {
+            const list = document.getElementById("alerts-list");
+            list.innerHTML = "";
+            if (alerts.length === 0) {
+                list.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--text-secondary); font-size:0.9rem;">All systems operational. System health score is nominal.</div>`;
+                return;
+            }
+
+            alerts.forEach(a => {
+                const isHigh = "limit" in a.reason.toLowerCase() || "critical" in a.reason.toLowerCase();
+                const item = document.createElement("div");
+                item.className = `alert-card ${isHigh ? 'critical' : 'warning'}`;
+                
+                // Handle alert click (PART 4)
+                item.onclick = () => {
+                    if (a.support_evidence_frames && a.support_evidence_frames.length > 0) {
+                        const player = document.getElementById("vid-player");
+                        // Jump video to frame
+                        player.currentTime = a.support_evidence_frames[0] / 8.0;
+                    }
+                    if (a.support_journey_ids && a.support_journey_ids.length > 0) {
+                        openCustomerDrawer(a.support_journey_ids[0]);
+                    }
+                };
+
+                item.innerHTML = `
+                    <div class="alert-header">
+                        <span class="alert-title">Operations Alert</span>
+                        <span class="alert-badge ${isHigh ? 'critical' : 'warning'}">${isHigh ? 'High' : 'Warning'}</span>
+                    </div>
+                    <div class="alert-reason">${a.reason}</div>
+                `;
+                list.appendChild(item);
+            });
+        }
+
+        function renderTimeline(timeline) {
+            const list = document.getElementById("timeline-list");
+            list.innerHTML = "";
+            if (timeline.length === 0) {
+                list.innerHTML = `<div style="text-align:center; padding:2.5rem; color:var(--text-secondary); font-size:0.9rem;">Timeline feed is empty.</div>`;
+                return;
+            }
+
+            // Reverse to display newest timeline feed first
+            const rev = [...timeline].reverse();
+            rev.forEach(evt => {
+                const item = document.createElement("div");
+                item.className = "timeline-item";
+                
+                let t_str = evt.timestamp;
+                try {
+                    t_str = new Date(evt.timestamp).toLocaleTimeString();
+                } catch(e){}
+
+                item.innerHTML = `
+                    <div class="timeline-dot"></div>
+                    <div class="timeline-time">${t_str} | Frame ${evt.frame}</div>
+                    <div class="timeline-msg">${evt.message} <span style="color:var(--text-secondary); font-size:0.75rem;">(Guest ${evt.journey_id.slice(0,4)})</span></div>
+                `;
+                list.appendChild(item);
+            });
+        }
+
+        function renderJourneys(journeys) {
             const list = document.getElementById("journeys-list");
             list.innerHTML = "";
+            if (journeys.length === 0) {
+                list.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--text-secondary); font-size:0.9rem;">Processing customer journeys...</div>`;
+                return;
+            }
 
             journeys.forEach(j => {
                 const isSeated = j.state === "SEATED";
+                const cleanName = `Guest ${j.journey_id.slice(0, 4).toUpperCase()}`;
+                
                 const item = document.createElement("div");
-                item.className = `journey-item ${selectedJourneyId === j.journey_id ? 'expanded active' : ''}`;
-                item.onclick = (e) => {
-                    if (e.target.tagName === 'BUTTON') return;
-                    selectedJourneyId = selectedJourneyId === j.journey_id ? "" : j.journey_id;
-                    renderJourneys();
-                };
-
-                const timelineHtml = j.timeline.map(node => `
-                    <div class="timeline-node">
-                        <span style="color:var(--primary);">✦</span>
-                        <span>Frame ${node.frame}: <strong>${node.state}</strong> (${new Date(node.timestamp).toLocaleTimeString()})</span>
-                    </div>
-                `).join('');
-
-                const picsHtml = ["entered", "waiting", "seated", "exit"]
-                    .map(state => `/runs/${currentRun}/evidence/${j.journey_id}_${state}.jpg`)
-                    .map(src => `<img class="evidence-pic" src="${src}" onerror="this.style.display='none'">`)
-                    .join('');
+                item.className = "journey-item";
+                item.onclick = () => openCustomerDrawer(j.journey_id);
 
                 item.innerHTML = `
-                    <div class="journey-header">
-                        <div class="journey-id">Journey: ${j.journey_id.slice(0,8)}...</div>
-                        <div class="journey-state ${isSeated ? 'seated' : ''}">${j.state}</div>
+                    <div class="journey-row">
+                        <div class="journey-name">${cleanName}</div>
+                        <div class="journey-badge ${isSeated ? 'seated' : ''}">${j.state}</div>
                     </div>
-                    <div class="journey-details">
-                        <span>Duration: ${j.waiting_duration + j.dining_duration}s</span>
-                        <span>Trackers: ${j.tracker_ids_merged ? j.tracker_ids_merged.join(', ') : 'None'}</span>
-                        <span>Current Zone: ${j.current_zone} | Table: ${j.table_id || 'None'}</span>
-                    </div>
-                    <div class="journey-timeline">
-                        ${timelineHtml}
-                        <div class="evidence-pics">
-                            ${picsHtml}
-                        </div>
-                        <div class="actions-row">
-                            <button class="btn-merge" onclick="openMergeModal('${j.journey_id}')">Merge</button>
-                            <button class="btn-correct" onclick="openCorrectModal('${j.journey_id}', '${j.current_zone}', '${j.table_id || ''}')">Correct</button>
-                            <button class="btn-delete" onclick="deleteJourney('${j.journey_id}')">Delete</button>
-                        </div>
+                    <div style="margin-top:0.4rem; font-size:0.8rem; color:var(--text-secondary);">
+                        Zone: <strong>${j.current_zone}</strong> | Table: <strong>${j.table_id || 'None'}</strong> | Wait: <strong>${j.waiting_duration}s</strong>
                     </div>
                 `;
                 list.appendChild(item);
             });
         }
 
+        // Customer Details Drawer Panel (PART 5)
+        async function openCustomerDrawer(jid) {
+            selectedId = jid;
+            try {
+                const resp = await fetch(`/dashboard/journeys?run=${currentRun}`);
+                const journeys = await resp.json();
+                const j = journeys.find(x => x.journey_id === jid);
+                if (!j) return;
+
+                document.getElementById("cust-title").textContent = `Guest Profile ${j.journey_id.slice(0, 4).toUpperCase()}`;
+                document.getElementById("cust-state").textContent = j.state;
+                document.getElementById("cust-dwell").innerHTML = `
+                    Total Duration: <strong>${j.waiting_duration + j.dining_duration} seconds</strong><br>
+                    Waiting Dwell time: <strong>${j.waiting_duration}s</strong><br>
+                    Dining Seated time: <strong>${j.dining_duration}s</strong>
+                `;
+                
+                // Visited zones badges
+                const zonesDiv = document.getElementById("cust-zones");
+                zonesDiv.innerHTML = "";
+                const visited = j.zone_history || ["Entrance", j.current_zone];
+                const uniqZones = Array.from(new Set(visited));
+                uniqZones.forEach(z => {
+                    const badge = document.createElement("span");
+                    badge.className = "journey-badge";
+                    badge.textContent = z;
+                    zonesDiv.appendChild(badge);
+                });
+
+                // Evidence images
+                const evidenceDiv = document.getElementById("cust-evidence-grid");
+                evidenceDiv.innerHTML = "";
+                ["entered", "waiting", "seated", "exit"].forEach(st => {
+                    const img = document.createElement("img");
+                    img.className = "evidence-img";
+                    img.src = `/runs/${currentRun}/evidence/${j.journey_id}_${st}.jpg`;
+                    img.onerror = () => img.style.display = 'none';
+                    evidenceDiv.appendChild(img);
+                });
+
+                // Timeline events specific to customer
+                const timelineDiv = document.getElementById("cust-timeline-list");
+                timelineDiv.innerHTML = "";
+                j.timeline.forEach(node => {
+                    const div = document.createElement("div");
+                    div.style.marginBottom = "0.25rem";
+                    div.innerHTML = `Frame ${node.frame}: <strong>${node.state}</strong>`;
+                    timelineDiv.appendChild(div);
+                });
+
+                // Configure drawer actions
+                document.getElementById("btn-merge-action").onclick = () => openMergeModal(j.journey_id);
+                document.getElementById("btn-edit-action").onclick = () => openCorrectModal(j.journey_id, j.current_zone, j.table_id || "");
+                document.getElementById("btn-delete-action").onclick = () => deleteJourney(j.journey_id);
+
+                document.getElementById("customer-drawer").classList.add("active");
+                document.getElementById("table-drawer").classList.remove("active");
+            } catch(e) {
+                console.error("Error opening customer card:", e);
+            }
+        }
+
+        function closeDrawer(id) {
+            document.getElementById(id).classList.remove("active");
+        }
+
+        // Modals & Corrections (PART 5 merge / edit / delete actions)
         function openMergeModal(jid) {
-            selectedJourneyId = jid;
+            selectedId = jid;
             const targetSelect = document.getElementById("merge-target-select");
             targetSelect.innerHTML = "";
-            journeys.forEach(j => {
-                if (j.journey_id !== jid) {
+            
+            // Populate select list
+            const timelineEvents = liveState.timeline || [];
+            const ids = Array.from(new Set(timelineEvents.map(e => e.journey_id)));
+            ids.forEach(id => {
+                if (id !== jid) {
                     const opt = document.createElement("option");
-                    opt.value = j.journey_id;
-                    opt.textContent = j.journey_id.slice(0,8) + "...";
+                    opt.value = id;
+                    opt.textContent = `Guest ${id.slice(0, 4).toUpperCase()}`;
                     targetSelect.appendChild(opt);
                 }
             });
@@ -465,7 +1447,7 @@
         }
 
         function openCorrectModal(jid, zone, table) {
-            selectedJourneyId = jid;
+            selectedId = jid;
             document.getElementById("correct-zone-input").value = zone;
             document.getElementById("correct-table-input").value = table;
             document.getElementById("modal-correct").style.display = "flex";
@@ -483,11 +1465,12 @@
                 body: JSON.stringify({
                     run: currentRun,
                     action: "merge",
-                    params: { journey_id_1: targetId, journey_id_2: selectedJourneyId }
+                    params: { journey_id_1: targetId, journey_id_2: selectedId }
                 })
             });
             closeModal("modal-merge");
-            loadRunData();
+            closeDrawer("customer-drawer");
+            pollLiveState();
         }
 
         async function submitCorrection() {
@@ -495,10 +1478,10 @@
             const table = document.getElementById("correct-table-input").value;
             
             let action = "correct_zone";
-            let params = { journey_id: selectedJourneyId, zone };
+            let params = { journey_id: selectedId, zone };
             if (table) {
                 action = "correct_table";
-                params = { journey_id: selectedJourneyId, table };
+                params = { journey_id: selectedId, table };
             }
 
             const resp = await fetch("/api/correct", {
@@ -511,11 +1494,12 @@
                 })
             });
             closeModal("modal-correct");
-            loadRunData();
+            closeDrawer("customer-drawer");
+            pollLiveState();
         }
 
         async function deleteJourney(jid) {
-            if (!confirm("Are you sure you want to delete this journey?")) return;
+            if (!confirm(`Are you sure you want to delete Guest ${jid.slice(0, 4).toUpperCase()}?`)) return;
             const resp = await fetch("/api/correct", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -525,7 +1509,70 @@
                     params: { journey_id: jid }
                 })
             });
-            loadRunData();
+            closeDrawer("customer-drawer");
+            pollLiveState();
+        }
+
+        // Export functionality (PART 8: client-side formatted export)
+        function exportData(format) {
+            if (!currentRun || !liveState) return;
+
+            let fileContent = "";
+            let mimeType = "application/json";
+            let filename = `restaurant_telemetry_${currentRun}.${format}`;
+
+            if (format === "json") {
+                fileContent = JSON.stringify(liveState, null, 4);
+                mimeType = "application/json";
+            } else if (format === "csv") {
+                // Compile clean tabular output of the operational timeline
+                const header = ["Timestamp", "Frame", "Guest ID", "Event Message"];
+                const rows = (liveState.timeline || []).map(e => [
+                    e.timestamp,
+                    e.frame,
+                    `Guest ${e.journey_id.slice(0, 4).toUpperCase()}`,
+                    e.message
+                ]);
+                
+                fileContent = [header, ...rows].map(row => row.map(cell => `"${cell}"`).join(",")).join("\n");
+                mimeType = "text/csv";
+            }
+
+            const blob = new Blob([fileContent], { type: mimeType });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Presentation Demo Mode presentation cycler (PART 9)
+        function toggleDemoMode() {
+            if (isDemoMode) {
+                // Stop Demo mode
+                clearInterval(demoTimer);
+                isDemoMode = false;
+                document.getElementById("btn-demo-mode").textContent = "Start Demo Mode";
+                document.getElementById("demo-mode-indicator").style.display = "none";
+            } else {
+                // Start Demo mode
+                isDemoMode = true;
+                document.getElementById("btn-demo-mode").textContent = "Stop Demo Mode";
+                document.getElementById("demo-mode-indicator").style.display = "flex";
+                
+                let step = 0;
+                demoTimer = setInterval(() => {
+                    const views = ["video", "floorplan", "heatmap"];
+                    const tabs = ["alerts", "timeline", "journeys"];
+                    
+                    // Cycle views and tabs every 20 seconds
+                    switchMainView(views[step % 3]);
+                    switchPanelTab(tabs[step % 3]);
+                    
+                    step++;
+                }, 20000);
+            }
         }
 
         window.onload = init;

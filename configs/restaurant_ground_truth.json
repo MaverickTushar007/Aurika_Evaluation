@@ -1,0 +1,32 @@
+{
+  "test_seated6": {
+    "customers_entered": 0.0,
+    "customers_exited": 0.0,
+    "current_occupancy": 4.0,
+    "queue_length": 0.0,
+    "average_wait_time": 0.0,
+    "average_dining_time": 19.26,
+    "table_occupancy": 7.0,
+    "server_visits": 0.0
+  },
+  "test_video": {
+    "customers_entered": 7.0,
+    "customers_exited": 4.0,
+    "current_occupancy": 3.0,
+    "queue_length": 2.0,
+    "average_wait_time": 0.0,
+    "average_dining_time": 0.0,
+    "table_occupancy": 0.0,
+    "server_visits": 0.0
+  },
+  "YTDown_YouTube_Computer-Vision-analytics-for-restaurant_Media_sFc1ZhDjvYI_001_720p": {
+    "customers_entered": 1.0,
+    "customers_exited": 1.0,
+    "current_occupancy": 0.0,
+    "queue_length": 0.0,
+    "average_wait_time": 0.0,
+    "average_dining_time": 0.0,
+    "table_occupancy": 0.0,
+    "server_visits": 0.0
+  }
+}

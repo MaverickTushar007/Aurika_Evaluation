@@ -5,7 +5,7 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-PORT = 8000
+PORT = 8080
 RUNS_DIR = "runs"
 
 class ExplainableKPIHandler(http.server.SimpleHTTPRequestHandler):
@@ -21,62 +21,229 @@ class ExplainableKPIHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/api/runs":
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
+        import sys
+        import traceback
+        import urllib.parse
+        print(f"REQUEST START - Path: {self.path}", flush=True)
+        try:
+            print("1 entered do_GET", flush=True)
+            parsed_url = urllib.parse.urlparse(self.path)
+            print("2 parsed URL", flush=True)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            print(f"Query parameters: {query_params}", flush=True)
             
-            runs = []
-            if os.path.exists(RUNS_DIR):
-                for d in os.listdir(RUNS_DIR):
-                    if os.path.isdir(os.path.join(RUNS_DIR, d)):
-                        runs.append(d)
-            self.wfile.write(json.dumps(sorted(runs)).encode('utf-8'))
-            return
+            req_path = parsed_url.path
             
-        elif self.path.startswith("/api/run/"):
-            run_name = self.path.split("/")[-1]
-            run_path = os.path.join(RUNS_DIR, run_name)
-            
-            if not os.path.exists(run_path):
-                self.send_response(404)
+            if req_path == "/api/runs":
+                print("Checking path: /api/runs", flush=True)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
                 self.end_headers()
+                
+                runs = []
+                print(f"Checking if {RUNS_DIR} exists", flush=True)
+                exists = os.path.exists(RUNS_DIR)
+                print(f"Checked if {RUNS_DIR} exists: {exists}", flush=True)
+                if exists:
+                    print(f"Listing directory {RUNS_DIR}", flush=True)
+                    dirs = os.listdir(RUNS_DIR)
+                    print(f"Listed directory {RUNS_DIR}: {dirs}", flush=True)
+                    for d in dirs:
+                        full_d = os.path.join(RUNS_DIR, d)
+                        print(f"Checking if {full_d} is directory", flush=True)
+                        is_dir = os.path.isdir(full_d)
+                        print(f"Checked if {full_d} is directory: {is_dir}", flush=True)
+                        if is_dir:
+                            runs.append(d)
+                response = json.dumps(sorted(runs))
+                print(f"Writing response: {response}", flush=True)
+                self.wfile.write(response.encode('utf-8'))
+                print("REQUEST END - /api/runs complete", flush=True)
                 return
                 
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            
-            # Load journeys
-            journeys_path = os.path.join(run_path, "journeys_explainable.json")
-            journeys = []
-            if os.path.exists(journeys_path):
-                with open(journeys_path, "r") as f:
-                    journeys = json.load(f)
-                    
-            # Load kpis
-            kpis_path = os.path.join(run_path, "kpis_evidence.json")
-            kpis = {}
-            if os.path.exists(kpis_path):
-                with open(kpis_path, "r") as f:
-                    kpis = json.load(f)
-                    
-            # List evidence thumbnails
-            evidence_dir = os.path.join(run_path, "evidence")
-            thumbnails = []
-            if os.path.exists(evidence_dir):
-                thumbnails = [f for f in os.listdir(evidence_dir) if f.endswith(".jpg")]
+            elif req_path.startswith("/api/run/"):
+                print("Checking path: /api/run/", flush=True)
+                run_name = req_path.split("/")[-1]
+                run_path = os.path.join(RUNS_DIR, run_name)
                 
-            self.wfile.write(json.dumps({
-                "run": run_name,
-                "journeys": journeys,
-                "kpis": kpis,
-                "thumbnails": thumbnails
-            }).encode('utf-8'))
-            return
+                print(f"Checking if run_path {run_path} exists", flush=True)
+                exists = os.path.exists(run_path)
+                print(f"Checked: {exists}", flush=True)
+                if not exists:
+                    self.send_response(404)
+                    self.end_headers()
+                    print("REQUEST END - Run not found", flush=True)
+                    return
+                    
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                
+                journeys_path = os.path.join(run_path, "journeys_explainable.json")
+                journeys = []
+                print(f"Checking if journeys_path {journeys_path} exists", flush=True)
+                j_exists = os.path.exists(journeys_path)
+                print(f"Checked journeys_path exists: {j_exists}", flush=True)
+                if j_exists:
+                    print(f"Opening journeys_path {journeys_path}", flush=True)
+                    with open(journeys_path, "r") as f:
+                        print(f"Loading json journeys_path", flush=True)
+                        journeys = json.load(f)
+                        print(f"Loaded json journeys_path", flush=True)
+                        
+                kpis_path = os.path.join(run_path, "kpis_evidence.json")
+                kpis = {}
+                print(f"Checking if kpis_path {kpis_path} exists", flush=True)
+                k_exists = os.path.exists(kpis_path)
+                print(f"Checked kpis_path exists: {k_exists}", flush=True)
+                if k_exists:
+                    print(f"Opening kpis_path {kpis_path}", flush=True)
+                    with open(kpis_path, "r") as f:
+                        print(f"Loading json kpis_path", flush=True)
+                        kpis = json.load(f)
+                        print(f"Loaded json kpis_path", flush=True)
+                        
+                evidence_dir = os.path.join(run_path, "evidence")
+                thumbnails = []
+                print(f"Checking if evidence_dir {evidence_dir} exists", flush=True)
+                ev_exists = os.path.exists(evidence_dir)
+                print(f"Checked evidence_dir exists: {ev_exists}", flush=True)
+                if ev_exists:
+                    print(f"Listing evidence_dir {evidence_dir}", flush=True)
+                    files = os.listdir(evidence_dir)
+                    print(f"Listed evidence_dir: {files}", flush=True)
+                    thumbnails = [f for f in files if f.endswith(".jpg")]
+                    
+                response = json.dumps({
+                    "run": run_name,
+                    "journeys": journeys,
+                    "kpis": kpis,
+                    "thumbnails": thumbnails
+                })
+                print(f"Writing response for /api/run/", flush=True)
+                self.wfile.write(response.encode('utf-8'))
+                print("REQUEST END - /api/run/ complete", flush=True)
+                return
+                
+            elif req_path.startswith("/dashboard/"):
+                print("Checking path: /dashboard/", flush=True)
+                
+                run_param = query_params.get("run", [None])[0]
+                print(f"Parsed run param: {run_param}", flush=True)
+                if run_param:
+                    run_path = os.path.join(RUNS_DIR, run_param)
+                else:
+                    print("Getting latest run dir", flush=True)
+                    run_path = self.get_latest_run_dir()
+                    print(f"Got latest run dir: {run_path}", flush=True)
+                    
+                if not run_path:
+                    self.send_response(404)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": "No active runs found"}).encode('utf-8'))
+                    print("REQUEST END - No active runs found", flush=True)
+                    return
+                    
+                state_file = os.path.join(run_path, "live_state.json")
+                state_data = {}
+                print(f"Checking if state_file {state_file} exists", flush=True)
+                st_exists = os.path.exists(state_file)
+                print(f"Checked state_file exists: {st_exists}", flush=True)
+                if st_exists:
+                    try:
+                        print(f"Opening state_file {state_file}", flush=True)
+                        with open(state_file, "r") as f:
+                            print("Loading json state_file", flush=True)
+                            state_data = json.load(f)
+                            print("Loaded json state_file", flush=True)
+                    except Exception as e:
+                        print(f"Error loading state file: {e}", flush=True)
+                        traceback.print_exc()
+                        
+                endpoint = req_path
+                print(f"Endpoint requested: {endpoint}", flush=True)
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                print("Sent headers", flush=True)
+                
+                if endpoint == "/dashboard/live":
+                    response = json.dumps(state_data)
+                elif endpoint == "/dashboard/kpis":
+                    response = json.dumps(state_data.get("kpis", {}))
+                elif endpoint == "/dashboard/alerts":
+                    response = json.dumps(state_data.get("alerts", []))
+                elif endpoint == "/dashboard/tables":
+                    response = json.dumps(state_data.get("tables", []))
+                elif endpoint == "/dashboard/staff":
+                    response = json.dumps({
+                        "staff_currently_visible": state_data.get("staff_currently_visible", 0),
+                        "staff_currently_serving": state_data.get("staff_currently_serving", 0)
+                    })
+                elif endpoint == "/dashboard/timeline":
+                    response = json.dumps(state_data.get("timeline", []))
+                elif endpoint == "/dashboard/journeys":
+                    journeys_path = os.path.join(run_path, "journeys_explainable.json")
+                    journeys = []
+                    print(f"Checking if journeys_path {journeys_path} exists", flush=True)
+                    je_exists = os.path.exists(journeys_path)
+                    print(f"Checked journeys_path exists: {je_exists}", flush=True)
+                    if je_exists:
+                        try:
+                            print(f"Opening journeys_path {journeys_path}", flush=True)
+                            with open(journeys_path, "r") as f:
+                                print("Loading json journeys_path", flush=True)
+                                journeys = json.load(f)
+                                print("Loaded json journeys_path", flush=True)
+                        except Exception as e:
+                            print(f"Error loading journeys explainable: {e}", flush=True)
+                            traceback.print_exc()
+                    response = json.dumps(journeys)
+                else:
+                    response = json.dumps({"error": "Unknown endpoint"})
+                    
+                print(f"Writing response", flush=True)
+                self.wfile.write(response.encode('utf-8'))
+                print("REQUEST END - /dashboard/ complete", flush=True)
+                return
 
-        # Serve files relative to CWD
-        return super().do_GET()
+            print("Delegating to super().do_GET()", flush=True)
+            super().do_GET()
+            print("super().do_GET() completed", flush=True)
+            
+        except Exception as e:
+            print(f"EXCEPTION IN do_GET: {e}", flush=True)
+            traceback.print_exc()
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
+
+    def get_latest_run_dir(self):
+        print("get_latest_run_dir START", flush=True)
+        try:
+            print(f"Checking if {RUNS_DIR} exists", flush=True)
+            if not os.path.exists(RUNS_DIR):
+                print(f"{RUNS_DIR} does not exist", flush=True)
+                return None
+            print(f"Listing directory {RUNS_DIR}", flush=True)
+            files = os.listdir(RUNS_DIR)
+            print(f"Listed directory {RUNS_DIR}: {files}", flush=True)
+            subdirs = [os.path.join(RUNS_DIR, d) for d in files]
+            subdirs = [d for d in subdirs if os.path.isdir(d)]
+            if not subdirs:
+                print("No subdirectories found", flush=True)
+                return None
+            print("Sorting subdirectories by mtime", flush=True)
+            subdirs.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+            print(f"Sorted subdirectories: {subdirs}", flush=True)
+            return subdirs[0]
+        except Exception as e:
+            print(f"Exception in get_latest_run_dir: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return None
 
     def do_POST(self):
         if self.path == "/api/correct":

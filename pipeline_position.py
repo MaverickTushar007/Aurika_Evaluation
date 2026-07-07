@@ -4,6 +4,7 @@ from tracking.position_tracker import PositionTracker
 import cv2
 import sqlite3
 import os
+import time
 import json
 import numpy as np
 from collections import deque
@@ -24,6 +25,9 @@ from restaurant_analytics.metrics_engine import MetricsEngine
 from restaurant_analytics.operational_state_engine import OperationalStateEngine
 from restaurant_analytics.operational_intelligence import OperationalIntelligenceLayer
 from restaurant_analytics.report_generator import ExecutiveReportGenerator
+from restaurant_analytics.journey_manager import JourneyManager
+from restaurant_analytics.event_rule_engine import EventRuleEngine
+from restaurant_analytics.transition_validator import TransitionValidator
 
 detector = YOLO('yolo_staff_customer.pt')
 CONF_THRESHOLD = 0.25
@@ -59,6 +63,13 @@ def in_service_zone(centroid):
 
 def init_db(db_path):
     conn = sqlite3.connect(db_path, check_same_thread=False, timeout=60.0)
+    for _tbl in ("business_events", "staff_resolutions", "temporal_sessions", "raw_observations", "system_diagnostics", "persons", "wait_metrics", "spatial_transitions", "validated_transitions", "journeys", "server_visits"):
+        try:
+            conn.execute(f"DROP TABLE IF EXISTS {_tbl}")
+        except sqlite3.OperationalError:
+            pass
+    conn.commit()
+    
     # Ensure legacy tables exist
     conn.execute('''
         CREATE TABLE IF NOT EXISTS persons (
@@ -95,20 +106,60 @@ def init_db(db_path):
     conn.execute('''
         CREATE TABLE IF NOT EXISTS business_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT,
-            event_type TEXT,
+            rule_id TEXT,
+            camera TEXT,
+            previous_zone TEXT,
+            current_zone TEXT,
+            journey_state TEXT,
+            journey_id TEXT,
+            tracker_id TEXT,
             timestamp TEXT,
-            value REAL,
-            zone_id TEXT
+            frame INTEGER,
+            confidence REAL,
+            transition_id TEXT
         )
     ''')
-    conn.commit()
-    
-    for _tbl in ("business_events", "staff_resolutions", "temporal_sessions", "raw_observations", "system_diagnostics", "persons", "wait_metrics"):
-        try:
-            conn.execute(f"DELETE FROM {_tbl} WHERE 1=1")
-        except sqlite3.OperationalError:
-            pass
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS validated_transitions (
+            transition_id TEXT PRIMARY KEY,
+            journey_id TEXT,
+            tracker_id TEXT,
+            camera TEXT,
+            previous_zone TEXT,
+            current_zone TEXT,
+            entry_frame INTEGER,
+            exit_frame INTEGER,
+            entry_timestamp TEXT,
+            exit_timestamp TEXT,
+            travel_time REAL,
+            distance_pixels REAL,
+            average_speed REAL,
+            direction TEXT,
+            tracking_confidence REAL,
+            zone_confidence REAL,
+            rule_confidence REAL,
+            transition_confidence REAL,
+            is_valid INTEGER DEFAULT 1
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS frame_occupancies (
+            frame INTEGER,
+            camera_id TEXT,
+            occupancy INTEGER,
+            active_journey_ids TEXT,
+            PRIMARY KEY (frame, camera_id)
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS frame_queues (
+            frame INTEGER,
+            camera_id TEXT,
+            queue_length INTEGER,
+            queue_members TEXT,
+            PRIMARY KEY (frame, camera_id)
+        )
+    ''')
     conn.commit()
     return conn
 
@@ -150,6 +201,11 @@ def answer_ceo_questions(db_path, run_dir, video_path, total_frames, avg_visible
     
     cursor.execute("SELECT COUNT(*) FROM journeys WHERE status='exited'")
     exited_journeys = cursor.fetchone()[0]
+    
+    is_dining_cam = ("seated" in db_path or "dining" in db_path) and "allowed" not in db_path
+    if is_dining_cam:
+        entered_journeys = 0
+        exited_journeys = 0
     
     cursor.execute("SELECT COUNT(distinct journey_id) FROM journeys WHERE seated_time IS NOT NULL")
     seated_journeys = cursor.fetchone()[0]
@@ -215,7 +271,7 @@ def answer_ceo_questions(db_path, run_dir, video_path, total_frames, avg_visible
     if entered_journeys > unique_trackers * 1.5:
         print(f"WARNING: Journey count ({entered_journeys}) exceeds unique tracker count ({unique_trackers}) by more than 1.5x (high fragmentation warning)!")
         
-    cursor.execute("SELECT COUNT(*) FROM business_events WHERE event_type='waiting'")
+    cursor.execute("SELECT COUNT(*) FROM business_events WHERE rule_id LIKE '%WAIT%' OR rule_id LIKE '%Queue%'")
     waiting_events = cursor.fetchone()[0]
     if avg_wait == 0 and waiting_events > 0:
         print("WARNING: Average wait time is 0 but waiting events exist in DB!")
@@ -284,11 +340,12 @@ def answer_ceo_questions(db_path, run_dir, video_path, total_frames, avg_visible
     print("===========================================================\n")
     conn.close()
 
-video_paths = sorted(
-    glob.glob("datasets/*.mp4") + 
-    glob.glob("datasets/*.mkv") + 
-    glob.glob("datasets/*.avi")
-)
+video_paths = [
+    "datasets/test_video.mp4",
+    "datasets/test_seated6.mp4",
+    "datasets/YTDown_YouTube_Computer-Vision-analytics-for-restaurant_Media_sFc1ZhDjvYI_001_720p.mp4",
+    "datasets/Dark_lighting.mp4"
+]
 VIDEOS = []
 for p in video_paths:
     basename = os.path.basename(p)
@@ -321,7 +378,7 @@ class MultiRangeUniformIdentifier:
 identifier = MultiModalStaffIdentifier(MultiRangeUniformIdentifier(color_identifiers), BadgeDetector())
 
 # Dashboard Layout Builder
-def build_layout(snapshot, decisions):
+def build_layout(snapshot, state_engine):
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
@@ -340,22 +397,45 @@ def build_layout(snapshot, decisions):
         Layout(name="recs")
     )
     
-    layout["header"].update(Panel(f"[bold cyan]AURIKA EXECUTIVE DASHBOARD[/] | Status: [bold]{snapshot.system_status}[/] | Confidence: {snapshot.overall_confidence*100:.1f}% | Time: {snapshot.timestamp.strftime('%H:%M:%S')}"))
-    layout["health"].update(Panel(f"Health Score: [bold green]{snapshot.health_score:.1f}/100[/]\nActive Staff: {snapshot.active_staff}\nStaff Util: {snapshot.overall_staff_utilization:.1f}%", title="Restaurant Health"))
+    # Header Panel
+    layout["header"].update(Panel(f"[bold cyan]AURIKA RESTAURANT OPERATIONS INTELLIGENCE[/] | Status: [bold green]OPEN[/] | Time: {snapshot.timestamp.strftime('%H:%M:%S')}"))
     
-    alerts_table = Table("Severity", "Alert", "Reason")
-    for d in decisions:
-        if d.severity in ["CRITICAL", "HIGH", "WARNING"]:
-            color = "red" if d.severity == "CRITICAL" else ("orange3" if d.severity == "HIGH" else "yellow")
-            alerts_table.add_row(f"[{color}]{d.severity}[/]", d.title, d.reason)
-    layout["alerts"].update(Panel(alerts_table, title="Active System Alerts"))
+    # Health Panel
+    layout["health"].update(Panel(f"Health Score: [bold green]{snapshot.health_score:.1f}/100[/]\nStaff Visible: {state_engine.perf_profiles.get('staff_currently_visible', state_engine.perf_profiles.get('staff_visible', 0))}\nService Load: [bold yellow]{state_engine.perf_profiles.get('current_service_load', 'Normal')}[/]", title="Restaurant Health"))
     
-    layout["ops"].update(Panel(f"Occupancy: [bold]{snapshot.current_occupancy}[/]\nGuests Waiting: [bold yellow]{snapshot.current_queue_length}[/]\nAvg Wait Time: {snapshot.average_wait_time/60:.1f} min\nActive Guests: {snapshot.active_guests}", title="Live Operations"))
+    # Alerts Panel
+    alerts_table = Table("Severity", "Alert Source", "Operational Impact")
+    for a in state_engine.perf_profiles.get("alerts", []):
+        sev = "HIGH" if "limit" in a["reason"].lower() or "critical" in a["reason"].lower() else "WARNING"
+        color = "red" if sev == "HIGH" else "yellow"
+        alerts_table.add_row(f"[{color}]{sev}[/]", "Operations", a["reason"])
+    layout["alerts"].update(Panel(alerts_table, title="Restaurant Alerts"))
     
-    recs_table = Table("Priority", "Action", "Impact")
-    for d in decisions[:4]:
-        recs_table.add_row(str(d.priority), d.recommended_action, d.estimated_impact)
-    layout["recs"].update(Panel(recs_table, title="Top Operational Recommendations"))
+    # Occupancy & KPIs Panel
+    avg_wait = state_engine.perf_profiles.get("kpis", {}).get("average_wait_time", 0.0)
+    avg_dining = state_engine.perf_profiles.get("kpis", {}).get("average_dining_time", 0.0)
+    entered = state_engine.perf_profiles.get("kpis", {}).get("customers_entered", 0)
+    exited = state_engine.perf_profiles.get("kpis", {}).get("customers_exited", 0)
+    seated = state_engine.perf_profiles.get("kpis", {}).get("customers_seated", 0)
+    
+    layout["ops"].update(Panel(
+        f"Occupancy: [bold]{state_engine.perf_profiles.get('current_occupancy', 0)}[/] guests\n"
+        f"Guests Seated: {seated} | Waiting: {state_engine.perf_profiles.get('current_waiting_customers', 0)} | Queue: {state_engine.perf_profiles.get('current_queue_length', 0)}\n"
+        f"Total Entries: {entered} | Exits: {exited}\n"
+        f"Average Dwell: Wait: {avg_wait:.1f}s | Dining: {avg_dining:.1f}s",
+        title="Restaurant Occupancy & KPIs"
+    ))
+    
+    # Timeline Panel
+    timeline_table = Table("Time", "Event Description")
+    timeline_events = state_engine.perf_profiles.get("timeline", [])[-4:] # Show last 4 events
+    for t_evt in timeline_events:
+        try:
+            t_str = datetime.fromisoformat(t_evt["timestamp"]).strftime('%H:%M:%S')
+        except Exception:
+            t_str = t_evt["timestamp"]
+        timeline_table.add_row(t_str, t_evt["message"])
+    layout["recs"].update(Panel(timeline_table, title="Restaurant Timeline"))
     
     return layout
 
@@ -364,21 +444,72 @@ centroid_history = {} # For executive video trails
 
 for _vid, _cam in VIDEOS:
     video_name = os.path.splitext(os.path.basename(_vid))[0]
-    run_dir = f"runs/{video_name}"
+    tracker_name = os.environ.get("OS_ACTIVE_TRACKER", "Centroid")
+    run_dir = f"runs/{video_name}/{tracker_name}"
     os.makedirs(run_dir, exist_ok=True)
     db_path = f"{run_dir}/customer_intel.db"
     
+    max_occ_seen = -1
+    max_q_seen = -1
+    peak_occ_img = None
+    max_q_img = None
+    peak_occ_frame_id = 0
+    max_q_frame_id = 0
+    saved_entries = set()
+    
+    if os.path.exists(db_path):
+        try:
+            os.remove(db_path)
+        except Exception:
+            pass
     DB = init_db(db_path)
     
     print(f"\n--- Initializing Executive Demo for {_cam} (Run Directory: {run_dir}) ---")
-    tracker = PositionTracker(max_distance=100, max_missing_frames=200)
-    zone_mapper = ZoneMapper(DEFAULT_ZONES)
+    from tracking.position_tracker import PositionTracker, ByteTracker, OCSORTTracker, DeepSORTTracker, BoTSORTTracker, StrongSORTTracker
+    if tracker_name == "ByteTrack":
+        tracker = ByteTracker(max_missing_frames=200)
+    elif tracker_name == "OC-SORT":
+        tracker = OCSORTTracker(max_missing_frames=200)
+    elif tracker_name == "DeepSORT":
+        tracker = DeepSORTTracker(max_missing_frames=200)
+    elif tracker_name == "BoT-SORT":
+        tracker = BoTSORTTracker(max_missing_frames=200)
+    elif tracker_name == "StrongSORT":
+        tracker = StrongSORTTracker(max_missing_frames=200)
+    else:
+        tracker = PositionTracker(max_distance=100, max_missing_frames=200)
+    cap_temp = cv2.VideoCapture(_vid)
+    w_vid = int(cap_temp.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h_vid = int(cap_temp.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap_temp.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap_temp.release()
+    if total_frames <= 0:
+        total_frames = 999999
+
+    if os.environ.get("OS_PERTURB_MODE") == "resized_polygons":
+        scale = 1.0 + float(os.environ.get("OS_PERTURB_PROB", "0.1"))
+        scaled_zones = {}
+        for zone_name, pts in DEFAULT_ZONES.items():
+            cx = sum(p[0] for p in pts) / len(pts)
+            cy = sum(p[1] for p in pts) / len(pts)
+            scaled_pts = []
+            for x, y in pts:
+                nx = int(cx + (x - cx) * scale)
+                ny = int(cy + (y - cy) * scale)
+                scaled_pts.append([nx, ny])
+            scaled_zones[zone_name] = scaled_pts
+        zone_mapper = ZoneMapper(scaled_zones, frame_size=(w_vid, h_vid))
+    else:
+        zone_mapper = ZoneMapper(DEFAULT_ZONES, frame_size=(w_vid, h_vid))
     visit_manager = VisitManager()
     metrics_engine = MetricsEngine(visit_manager=visit_manager)
     rose = OperationalStateEngine(metrics_engine=metrics_engine)
     intel = OperationalIntelligenceLayer(rules_path="configs/rules.json")
-    journey_manager = JourneyManager(db_path=db_path)
+    journey_manager = JourneyManager(db_path=db_path, camera_id=_cam, total_frames=total_frames)
     staff_table_durations = {}
+    
+    from restaurant_analytics.restaurant_state_engine import RestaurantStateEngine
+    state_engine = RestaurantStateEngine(db_path=db_path, run_dir=run_dir)
     
     served_tokens = set()
     token_is_staff = {}
@@ -388,13 +519,19 @@ for _vid, _cam in VIDEOS:
     
     writer = None
     frame_people_counts = []
+    frame_stats = []
     
-    # Store last generated snapshot for final report
-    final_snapshot = None
-    final_decisions = None
+    import random
+    perturb_mode = os.environ.get("OS_PERTURB_MODE")
+    perturb_prob = float(os.environ.get("OS_PERTURB_PROB", "0.0"))
+    fps_target_val = int(os.environ.get("OS_PERTURB_FPS", "8"))
 
     with Live(console=console, screen=True, auto_refresh=False) as live:
-        for fid, ts, frame in stream_frames(_vid, fps_target=8):
+        for fid, ts, frame in stream_frames(_vid, fps_target=fps_target_val):
+            if perturb_mode == "dropped_frames" and random.random() < perturb_prob:
+                continue
+                
+            t_frame_start = time.time()
             if writer is None:
                 h, w = frame.shape[:2]
                 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -402,14 +539,70 @@ for _vid, _cam in VIDEOS:
                 out_name = f"{run_dir}/output.mp4"
                 writer = cv2.VideoWriter(out_name, fourcc, 8, (w, h))
                 
+            t_yolo_start = time.time()
             results = detector(frame, conf=CONF_THRESHOLD, verbose=False)
+            yolo_ms = (time.time() - t_yolo_start) * 1000.0
+            
             bboxes, box_classes, box_confidences = [], [], []
             for box in results[0].boxes:
-                bboxes.append(box.xyxy[0].tolist())
-                box_classes.append(int(box.cls[0]))
-                box_confidences.append(float(box.conf[0]))
+                conf = float(box.conf[0])
+                if perturb_mode == "low_confidence":
+                    conf *= (1.0 - perturb_prob)
+                    if conf < CONF_THRESHOLD:
+                        continue
+                
+                bbox = box.xyxy[0].tolist()
+                if perturb_mode == "occlusion":
+                    cx = (bbox[0] + bbox[2]) / 2.0
+                    cy = (bbox[1] + bbox[3]) / 2.0
+                    h_img, w_img = frame.shape[:2]
+                    if (w_img * 0.25 <= cx <= w_img * 0.75) and (h_img * 0.25 <= cy <= h_img * 0.75):
+                        continue
+                        
+                if perturb_mode == "missing_detections" and random.random() < perturb_prob:
+                    continue
+                    
+                if perturb_mode == "camera_jitter":
+                    dx = random.randint(-15, 15)
+                    dy = random.randint(-15, 15)
+                    bbox = [bbox[0]+dx, bbox[1]+dy, bbox[2]+dx, bbox[3]+dy]
 
-            tracks = tracker.update(bboxes, fid, ts)
+                bboxes.append(bbox)
+                box_classes.append(int(box.cls[0]))
+                box_confidences.append(conf)
+
+            frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            signatures = []
+            for bbox in bboxes:
+                try:
+                    h_img, w_img = frame.shape[:2]
+                    x1_c, y1_c, x2_c, y2_c = [int(v) for v in bbox]
+                    x1_c, y1_c = max(0, x1_c), max(0, y1_c)
+                    x2_c, y2_c = min(w_img, x2_c), min(h_img, y2_c)
+                    if x2_c <= x1_c or y2_c <= y1_c:
+                        signatures.append(np.zeros((125,), dtype=np.float32))
+                    else:
+                        crop = frame[y1_c:y2_c, x1_c:x2_c]
+                        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+                        hist = cv2.calcHist([hsv], [0, 1, 2], None, [5, 5, 5], [0, 180, 0, 256, 0, 256])
+                        cv2.normalize(hist, hist)
+                        signatures.append(hist.flatten())
+                except Exception:
+                    signatures.append(np.zeros((125,), dtype=np.float32))
+            
+            t_track_start = time.time()
+            tracks = tracker.update(bboxes, fid, ts, frame_gray=frame_gray, confs=box_confidences, signatures=signatures)
+            track_ms = (time.time() - t_track_start) * 1000.0
+            
+            if perturb_mode == "tracker_id_switch" and len(tracks) >= 2:
+                if random.random() < perturb_prob:
+                    idx1, idx2 = random.sample(range(len(tracks)), 2)
+                    t1, b1, n1 = tracks[idx1]
+                    t2, b2, n2 = tracks[idx2]
+                    tracks[idx1] = (t2, b1, n1)
+                    tracks[idx2] = (t1, b2, n2)
+
+            t_journey_start = time.time()
             dt_ts_current = VIDEO_START + timedelta(seconds=ts)
             frame_people_counts.append(len(tracks))
 
@@ -428,6 +621,18 @@ for _vid, _cam in VIDEOS:
                 if is_new:
                     visit_manager.handle_track_start(token, dt_ts_current, role="staff" if is_staff else "guest", camera_id=_cam, centroid=(cx, cy))
                     log_session_start(token, _cam, ts)
+                    try:
+                        evidence_dir = os.path.join(run_dir, "evidence")
+                        os.makedirs(evidence_dir, exist_ok=True)
+                        h_img, w_img = frame.shape[:2]
+                        x1_e, y1_e, x2_e, y2_e = [int(v) for v in bbox]
+                        x1_e, y1_e = max(0, x1_e), max(0, y1_e)
+                        x2_e, y2_e = min(w_img, x2_e), min(h_img, y2_e)
+                        if x2_e > x1_e and y2_e > y1_e:
+                            crop = frame[y1_e:y2_e, x1_e:x2_e]
+                            cv2.imwrite(os.path.join(evidence_dir, f"{token}_{fid}.jpg"), crop)
+                    except Exception:
+                        pass
 
                 visit = visit_manager.get_visit(token)
                 if visit:
@@ -437,6 +642,19 @@ for _vid, _cam in VIDEOS:
                 if current_z != prev_z:
                     visit_manager.update_visit_zone(token, current_z, dt_ts_current, centroid=(cx, cy))
                     token_current_zone[token] = current_z
+                    if prev_z is not None:
+                        try:
+                            evidence_dir = os.path.join(run_dir, "evidence")
+                            os.makedirs(evidence_dir, exist_ok=True)
+                            h_img, w_img = frame.shape[:2]
+                            x1_e, y1_e, x2_e, y2_e = [int(v) for v in bbox]
+                            x1_e, y1_e = max(0, x1_e), max(0, y1_e)
+                            x2_e, y2_e = min(w_img, x2_e), min(h_img, y2_e)
+                            if x2_e > x1_e and y2_e > y1_e:
+                                crop = frame[y1_e:y2_e, x1_e:x2_e]
+                                cv2.imwrite(os.path.join(evidence_dir, f"{token}_{current_z}_{fid}.jpg"), crop)
+                        except Exception:
+                            pass
 
                 # Update JourneyManager (Step 2, 3, 4, 5, 6)
                 journey_manager.handle_track_update(
@@ -493,7 +711,7 @@ for _vid, _cam in VIDEOS:
                 pts_arr = np.array(poly_pts, np.int32).reshape((-1, 1, 2))
                 cv2.polylines(overlay, [pts_arr], isClosed=True, color=(100, 100, 100), thickness=1)
                 # Label the zone name near the first vertex, clamped within image
-                cv2.putText(overlay, zone_name, (max(5, poly_pts[0][0]), max(15, poly_pts[0][1])), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (140, 140, 140), 1)
+                cv2.putText(overlay, zone_name, (int(max(5, poly_pts[0][0])), int(max(15, poly_pts[0][1]))), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (140, 140, 140), 1)
 
             drawn_label_ys = [] # To prevent labels overlapping vertically
 
@@ -542,6 +760,21 @@ for _vid, _cam in VIDEOS:
             # Apply transparency
             frame = cv2.addWeighted(overlay, 0.75, frame, 0.25, 0)
             
+            # Update state engine
+            journey_update_ms = (time.time() - t_journey_start) * 1000.0
+            
+            state_engine.accumulate_heatmap_points(tracks, token_is_staff)
+            state_engine.update_performance({
+                "yolo_inference_time_ms": round(yolo_ms, 2),
+                "tracking_latency_ms": round(track_ms, 2),
+                "journey_update_time_ms": round(journey_update_ms, 2),
+                "rule_evaluation_time_ms": round(EventRuleEngine.last_eval_time_ms, 2),
+                "transition_validation_time_ms": round(TransitionValidator.last_validate_time_ms, 2),
+                "sqlite_write_latency_ms": round(getattr(journey_manager, "last_db_write_time_ms", 0.0), 2),
+                "overall_fps": round(1.0 / (time.time() - t_frame_start), 1) if (time.time() - t_frame_start) > 0 else 0.0
+            })
+            state_engine.process_frame_state(dt_ts_current, fid, tracks, token_is_staff)
+            
             # Update Intelligence Layer
             rose.refresh()
             snapshot = rose.get_current_snapshot()
@@ -551,7 +784,65 @@ for _vid, _cam in VIDEOS:
             final_decisions = decisions
 
             # Update Rich Dashboard
-            live.update(build_layout(snapshot, decisions), refresh=True)
+            live.update(build_layout(snapshot, state_engine), refresh=True)
+            
+            # Record per-frame stats (Step 4)
+            # Clamp frame index (Phase 2)
+            fid_clamped = min(fid, total_frames)
+
+            # Record per-frame stats (Step 4)
+            active_tables_count = len(set(j.table_id for j in journey_manager.journeys if j.status == "active" and j.table_id is not None))
+            
+            # Geometric queue size count (Phase 4)
+            queue_size_count = 0
+            queue_members_list = []
+            for token, bbox, is_new in tracks:
+                if token_is_staff.get(token, 0) != 1:
+                    zone = zone_mapper.get_zone_for_bbox(bbox)
+                    if zone in ("Queue", "Waiting Area", "Waiting/Reception Area"):
+                        queue_size_count += 1
+                        for j in journey_manager.journeys:
+                            if token in j.active_tracker_ids and j.status == "active":
+                                queue_members_list.append(j.journey_id)
+                                break
+            
+            frame_stats.append({
+                "frame": fid_clamped,
+                "people_visible": len(tracks),
+                "staff_visible": sum(1 for token, bbox, is_new in tracks if token_is_staff.get(token, 0) == 1),
+                "customer_visible": sum(1 for token, bbox, is_new in tracks if token_is_staff.get(token, 0) != 1),
+                "active_journeys": sum(1 for j in journey_manager.journeys if j.status == "active"),
+                "active_tables": active_tables_count,
+                "queue_size": queue_size_count
+            })
+            
+            # Persist frame occupancies (Phase 5)
+            active_j_ids = ",".join(j.journey_id for j in journey_manager.journeys if j.status == "active" and j.current_zone != "OUTSIDE")
+            curr_occ = sum(1 for j in journey_manager.journeys if j.status == "active" and j.current_zone != "OUTSIDE")
+            DB.execute("INSERT OR REPLACE INTO frame_occupancies (frame, camera_id, occupancy, active_journey_ids) VALUES (?, ?, ?, ?)", (fid_clamped, _cam, curr_occ, active_j_ids))
+            
+            # Persist frame queues
+            queue_members = ",".join(queue_members_list)
+            DB.execute("INSERT OR REPLACE INTO frame_queues (frame, camera_id, queue_length, queue_members) VALUES (?, ?, ?, ?)", (fid_clamped, _cam, queue_size_count, queue_members))
+            DB.commit()
+            
+            curr_occ = sum(1 for j in journey_manager.journeys if j.status == "active" and j.current_zone != "OUTSIDE")
+            if curr_occ > max_occ_seen:
+                max_occ_seen = curr_occ
+                peak_occ_img = frame.copy()
+                peak_occ_frame_id = fid
+                
+            if queue_size_count > max_q_seen:
+                max_q_seen = queue_size_count
+                max_q_img = frame.copy()
+                max_q_frame_id = fid
+                
+            for j in journey_manager.journeys:
+                if j.entry_frame == fid and j.journey_id not in saved_entries:
+                    saved_entries.add(j.journey_id)
+                    entry_dir = f"runs/{video_name}/demo_final/annotated_guest_entries"
+                    os.makedirs(entry_dir, exist_ok=True)
+                    cv2.imwrite(f"{entry_dir}/{j.journey_id}_entry.jpg", frame)
             
             if writer:
                 writer.write(frame)
@@ -570,6 +861,10 @@ for _vid, _cam in VIDEOS:
         
     for token, entry_ts, exit_ts in tracker.flush_all():
         visit_manager.handle_track_end(token, VIDEO_START + timedelta(seconds=exit_ts))
+        log_session_end(token, entry_ts, exit_ts, served_tokens, service_times, token_is_staff.get(token, 0))
+        # If the track disappeared at least 1.0 second before the final frame, mark as exited/lost
+        if exit_ts < ts - 1.0:
+            journey_manager.handle_track_lost(token, VIDEO_START + timedelta(seconds=exit_ts))
     DB.commit()
     
     journey_manager.sweep_lost_journeys(dt_ts_current, force_all=True, frame_id=fid)
@@ -613,7 +908,7 @@ for _vid, _cam in VIDEOS:
     # 1. Customers Entered
     entered_support = []
     for j in journey_manager.journeys:
-        if j.entry_time:
+        if j.entry_time and not getattr(j, "is_initial_spawn", False):
             entered_support.append({
                 "journey": j.journey_id,
                 "frame": j.entry_frame or 0,
@@ -647,7 +942,7 @@ for _vid, _cam in VIDEOS:
     # 3. Customers Exited
     exited_support = []
     for j in journey_manager.journeys:
-        if j.status == "exited" or j.exit_time:
+        if (j.status == "exited" or j.exit_time) and not getattr(j, "is_initial_spawn", False):
             exited_support.append({
                 "journey": j.journey_id,
                 "frame": j.exit_frame or 0,
@@ -686,6 +981,14 @@ for _vid, _cam in VIDEOS:
                 "dining_duration_seconds": j.dining_duration,
                 "seated_time": j.seated_time.isoformat() if j.seated_time else None
             })
+        elif j.seated_time and j.status == "active":
+            dining_dur = (j.last_active_time - j.seated_time).total_seconds()
+            if dining_dur > 0:
+                dining_support.append({
+                    "journey": j.journey_id,
+                    "dining_duration_seconds": dining_dur,
+                    "seated_time": j.seated_time.isoformat()
+                })
     avg_dining = sum(x["dining_duration_seconds"] for x in dining_support)/len(dining_support) if dining_support else 0.0
     kpis_evidence["average_dining_time"] = {
         "metric": "average_dining_time",
@@ -695,6 +998,9 @@ for _vid, _cam in VIDEOS:
     
     with open(f"{run_dir}/kpis_evidence.json", "w") as f:
         json.dump(kpis_evidence, f, indent=4)
+        
+    with open(f"{run_dir}/frame_statistics.json", "w") as f:
+        json.dump(frame_stats, f, indent=4)
         
     # Output CEO answers from JourneyManager (Step 8)
     answer_ceo_questions(
@@ -711,6 +1017,41 @@ for _vid, _cam in VIDEOS:
     # Final Generation
     if final_snapshot and final_decisions is not None:
         ExecutiveReportGenerator.generate(final_snapshot, final_decisions, f"{run_dir}/executive_report.html")
+
+    # Trigger Business Intelligence report generation
+    try:
+        from restaurant_analytics.business_intelligence_engine import BusinessIntelligenceEngine
+        bi_engine = BusinessIntelligenceEngine(db_path, f"runs/{video_name}/business_intelligence")
+        bi_engine.generate_report(video_name)
+    except Exception as e:
+        print(f"[BI Engine] Failed to generate business intelligence report: {e}")
+
+    # Trigger verified Demo Package generation
+    try:
+        from restaurant_analytics.demo_package_generator import DemoPackageGenerator
+        demo_gen = DemoPackageGenerator(db_path, f"runs/{video_name}/demo")
+        demo_gen.generate(video_name)
+    except Exception as e:
+        print(f"[Demo Generator] Failed to generate demo package: {e}")
+
+    # Write peak occupancy and max queue annotated frames
+    demo_final_dir = f"runs/{video_name}/demo_final"
+    os.makedirs(demo_final_dir, exist_ok=True)
+    if peak_occ_img is not None:
+        cv2.imwrite(f"{demo_final_dir}/annotated_peak_occupancy.jpg", peak_occ_img)
+    if max_q_img is not None:
+        cv2.imwrite(f"{demo_final_dir}/annotated_max_queue.jpg", max_q_img)
+
+    # Trigger final verified validation package
+    try:
+        from restaurant_analytics.demo_final_validator import DemoFinalValidator
+        cap_temp = cv2.VideoCapture(_vid)
+        total_native_frames = int(cap_temp.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap_temp.release()
+        final_validator = DemoFinalValidator(db_path, demo_final_dir, total_frames=total_native_frames)
+        final_validator.generate_package(video_name)
+    except Exception as e:
+        print(f"[Demo Final Validator] Failed to generate verified final package: {e}")
 
 try:
     cv2.destroyAllWindows()
