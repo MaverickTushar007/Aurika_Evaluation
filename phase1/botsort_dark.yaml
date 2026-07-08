@@ -1,0 +1,32 @@
+# Aurika Phase 1 — BoTSORT tuned for dark/indoor footage
+# yolo_staff_customer.pt produces confidence 0.05-0.12 on Dark_lighting.mp4
+# All thresholds are set far below the model's actual detection range.
+
+tracker_type: botsort
+
+# Detection confidence thresholds — matched to actual model output range
+track_high_thresh: 0.05       # First-stage match (model rarely exceeds 0.15)
+track_low_thresh: 0.01        # Second-pass recovery for very low-conf frames
+new_track_thresh: 0.04        # Min conf to start a brand-new track
+
+# Extended buffer — 90 frames (~3s at 30fps, ~9s at 10fps effective)
+# Covers full doorway-to-table transit without losing identity
+track_buffer: 90
+
+# IoU threshold — permissive to handle body shape changes under occlusion
+match_thresh: 0.93
+
+# Fuse detection score with IoU for matching
+fuse_score: True
+
+# BoT-SORT global motion compensation
+# Since the camera is static, global motion compensation is not needed.
+gmc_method: none
+
+# ReID thresholds (unused when with_reid=False)
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+
+# ReID disabled — IoU + Kalman + GMC sufficient for fixed camera
+with_reid: False
+model: auto
