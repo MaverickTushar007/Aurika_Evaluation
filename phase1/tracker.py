@@ -30,6 +30,7 @@ class TrackedPerson:
     track_conf: float               # BoTSORT track confidence [0..1]
     is_new: bool                    # True if this ID appeared for the first time
     class_id: int = 0               # always 0 (person)
+    association_cost: float = 0.0   # Hungarian matching cost (1 - IoU)
 
     @property
     def bottom_center(self) -> tuple:
@@ -153,6 +154,13 @@ class PersonTracker:
                         "reason": "new_id_after_start"
                     })
 
+            costs = {}
+            if hasattr(self.model, 'predictor') and self.model.predictor is not None:
+                if hasattr(self.model.predictor, 'trackers') and len(self.model.predictor.trackers) > 0:
+                    tracker_obj = self.model.predictor.trackers[0]
+                    costs = getattr(tracker_obj, 'match_costs', {})
+            cost = costs.get(tid, 0.0)
+
             person = TrackedPerson(
                 person_id=tid,
                 bbox=(x1, y1, x2, y2),
@@ -160,6 +168,7 @@ class PersonTracker:
                 track_conf=track_conf,
                 is_new=is_new,
                 class_id=cls,
+                association_cost=cost,
             )
             result.persons.append(person)
 

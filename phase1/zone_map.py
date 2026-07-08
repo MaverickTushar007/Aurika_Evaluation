@@ -20,8 +20,8 @@ import cv2
 import numpy as np
 
 
-OUTSIDE = "Outside operational floor"
-HYSTERESIS_FRAMES = 5   # frames a person must stay in new zone before transition fires
+OUTSIDE = "OUTSIDE"
+HYSTERESIS_FRAMES = 10   # frames a person must stay in new zone before transition fires
 
 
 # ── Zone definition ────────────────────────────────────────────────────────────

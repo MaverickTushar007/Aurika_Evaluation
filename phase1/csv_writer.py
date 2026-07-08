@@ -29,8 +29,10 @@ TRANSITION_COLS = [
 
 FRAME_HISTORY_COLS = [
     "frame", "timestamp_sec", "person_id", "current_zone", "track_age",
-    "is_visible", "bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2",
+    "visibility", "tracking_state", "bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2",
     "bottom_center_x", "bottom_center_y",
+    "observation_type", "is_detected", "detection_confidence",
+    "association_cost", "frames_since_detection", "track_quality",
 ]
 
 PERSON_SUMMARY_COLS = [
@@ -120,7 +122,14 @@ class FrameHistoryWriter:
         current_zone: str,
         bbox: tuple,
         bottom_center: tuple,
-        is_visible: bool = True,
+        visibility: str = "VISIBLE",
+        tracking_state: str = "ACTIVE",
+        observation_type: str = "OBSERVED",
+        is_detected: int = 1,
+        detection_confidence: float = 0.0,
+        association_cost: float = 0.0,
+        frames_since_detection: int = 0,
+        track_quality: str = "HIGH",
     ):
         if person_id not in self._first_frame:
             self._first_frame[person_id] = frame
@@ -132,13 +141,20 @@ class FrameHistoryWriter:
             "person_id": person_id,
             "current_zone": current_zone,
             "track_age": track_age,
-            "is_visible": int(is_visible),
+            "visibility": visibility,
+            "tracking_state": tracking_state,
             "bbox_x1": x1,
             "bbox_y1": y1,
             "bbox_x2": x2,
             "bbox_y2": y2,
             "bottom_center_x": bottom_center[0],
             "bottom_center_y": bottom_center[1],
+            "observation_type": observation_type,
+            "is_detected": is_detected,
+            "detection_confidence": round(detection_confidence, 4),
+            "association_cost": round(association_cost, 4),
+            "frames_since_detection": frames_since_detection,
+            "track_quality": track_quality,
         })
         self._row_count += 1
         # Periodic flush (every 500 rows)

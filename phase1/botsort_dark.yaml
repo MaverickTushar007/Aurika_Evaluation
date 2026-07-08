@@ -9,9 +9,9 @@ track_high_thresh: 0.05       # First-stage match (model rarely exceeds 0.15)
 track_low_thresh: 0.01        # Second-pass recovery for very low-conf frames
 new_track_thresh: 0.04        # Min conf to start a brand-new track
 
-# Extended buffer — 90 frames (~3s at 30fps, ~9s at 10fps effective)
+# Extended buffer — 120 frames (~4s at 30fps, ~12s at 10fps effective)
 # Covers full doorway-to-table transit without losing identity
-track_buffer: 90
+track_buffer: 120
 
 # IoU threshold — permissive to handle body shape changes under occlusion
 match_thresh: 0.93

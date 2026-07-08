@@ -715,11 +715,14 @@ for _vid, _cam in VIDEOS:
             # Compute stats early based on business state machine (Task 3 & 4)
             entered_count = sum(1 for j in journey_manager.journeys if j.state in ("ENTERED", "WAITING", "DINING", "EXITED") and not getattr(j, "is_initial_spawn", False))
             exited_count = sum(1 for j in journey_manager.journeys if j.state == "EXITED" and not getattr(j, "is_initial_spawn", False))
-            curr_occ = sum(1 for j in journey_manager.journeys if j.state in ("ENTERED", "WAITING", "DINING") and not getattr(j, "is_initial_spawn", False))
+            curr_occ = sum(1 for j in journey_manager.journeys if j.status == "active" and j.state not in ("OUTSIDE", "EXITED"))
             active_tables_count = 0 # No table view in this camera role
             
-            queue_size_count = sum(1 for j in journey_manager.journeys if j.state == "WAITING" and not getattr(j, "is_initial_spawn", False))
-            queue_members_list = [j.journey_id for j in journey_manager.journeys if j.state == "WAITING" and not getattr(j, "is_initial_spawn", False)]
+            # Queue size = number of guests PHYSICALLY inside Queue or Reception zone right now
+            # Zone-based, not state-based. Any presence in the waiting area = waiting.
+            WAITING_ZONES = {"Queue", "Reception", "Waiting Area"}
+            queue_size_count = sum(1 for j in journey_manager.journeys if j.status == "active" and getattr(j, "current_zone", j.entry_gate) in WAITING_ZONES)
+            queue_members_list = [j.journey_id for j in journey_manager.journeys if j.status == "active" and getattr(j, "current_zone", j.entry_gate) in WAITING_ZONES]
 
             # Track peak occupancy updates
             if curr_occ > max_occ_seen:

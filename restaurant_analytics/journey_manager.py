@@ -566,37 +566,43 @@ class JourneyManager:
             j.last_active_time = timestamp
             j.previous_centroid = j.last_centroid
             j.last_centroid = centroid
+            # Save previous zone before updating for zone-change detection below
+            _prev_zone_for_detection = j.current_zone
+            # Always update j.current_zone so queue_size_count can be computed from zone membership
+            j.current_zone = zone
             
-            # Check standing status (displacement < 8px over last 15 frames)
+            # Keep centroid history for future use (no longer used for waiting gate)
             j.centroid_history.append(centroid)
-            is_standing = True
-            if len(j.centroid_history) >= 15:
-                old_c = j.centroid_history[-15]
-                dist = ((centroid[0]-old_c[0])**2 + (centroid[1]-old_c[1])**2)**0.5
-                if dist > 8.0:
-                    is_standing = False
 
             # Business State Machine Transitions (Task 3)
+            # Business State Machine Transitions (dark_lighting = zone-based, no velocity gate)
             if self.is_dark_lighting:
                 if j.state == "OUTSIDE":
+                    # ENTRY: person physically crosses the ENTRANCE DOORWAY.
+                    # Only zones adjacent to the entrance door count as a valid entry crossing.
+                    # Spawning in Dining/Exit/Unknown = pre-existing occupant or camera artifact.
+                    ENTRY_ZONES = {"Queue", "Reception", "Entrance", "Waiting Area"}
                     is_initial_spawn = (j.entry_frame is not None and j.entry_frame < 50) or (frame_id < 50)
-                    if not is_initial_spawn and zone not in ("Exit", "Dining", "UNKNOWN_ZONE") and (centroid[0] >= 800 or zone == "Entrance"):
+                    if not is_initial_spawn and zone in ENTRY_ZONES:
                         j.update_state("ENTERED", timestamp, frame_id)
                         self.log_business_event(frame_id, timestamp, "ENTERED", j.journey_id, track_id)
                 
                 elif j.state == "ENTERED":
-                    if zone in ("Queue", "Reception") and is_standing:
+                    # WAITING: purely zone-based — any presence in Queue/Reception = waiting
+                    if zone in ("Queue", "Reception", "Waiting Area"):
                         j.update_state("WAITING", timestamp, frame_id)
                         self.log_business_event(frame_id, timestamp, "WAITING_START", j.journey_id, track_id)
                     elif zone == "Dining":
                         j.update_state("DINING", timestamp, frame_id)
                         self.log_business_event(frame_id, timestamp, "DINING_START", j.journey_id, track_id)
-                    elif zone in ("Exit", "OUTSIDE"):
+                    elif zone in ("Exit", "OUTSIDE") and j.status != "exited":
+                        # EXITED: guest physically walks to exit zone / leaves camera view
                         j.update_state("EXITED", timestamp, frame_id)
                         j.status = "exited"
                         self.log_business_event(frame_id, timestamp, "EXITED", j.journey_id, track_id)
 
                 elif j.state == "WAITING":
+                    # WAIT END: only when guest leaves waiting region toward dining
                     if zone == "Dining":
                         wait_dur = (timestamp - j.waiting_started).total_seconds() if j.waiting_started else 0.0
                         j.total_waiting_seconds += wait_dur
@@ -605,6 +611,7 @@ class JourneyManager:
                         j.update_state("DINING", timestamp, frame_id)
                         self.log_business_event(frame_id, timestamp, "WAITING_END", j.journey_id, track_id, destination_zone="Dining", waiting_seconds=wait_dur)
                     elif zone in ("Exit", "OUTSIDE"):
+                        # Guest left without being seated — waiting ends
                         wait_dur = (timestamp - j.waiting_started).total_seconds() if j.waiting_started else 0.0
                         j.total_waiting_seconds += wait_dur
                         j.waiting_visits_count += 1
@@ -613,20 +620,22 @@ class JourneyManager:
                         j.status = "exited"
                         self.log_business_event(frame_id, timestamp, "WAITING_END", j.journey_id, track_id, destination_zone="OUTSIDE", waiting_seconds=wait_dur)
                         self.log_business_event(frame_id, timestamp, "EXITED", j.journey_id, track_id)
+                    # If zone is still Queue/Reception: guest is STILL waiting — do nothing
 
                 elif j.state == "DINING":
-                    if zone in ("Queue", "Reception") and is_standing:
+                    # Return to waiting: guest walks back to waiting zone — still same session
+                    if zone in ("Queue", "Reception", "Waiting Area"):
                         j.update_state("WAITING", timestamp, frame_id)
                         j.returned_to_queue = True
                         self.log_business_event(frame_id, timestamp, "WAITING_START", j.journey_id, track_id)
-                    elif zone in ("Exit", "OUTSIDE"):
+                    elif zone in ("Exit", "OUTSIDE") and j.status != "exited":
                         j.update_state("EXITED", timestamp, frame_id)
                         j.status = "exited"
                         self.log_business_event(frame_id, timestamp, "EXITED", j.journey_id, track_id)
             
-            # Zone change checks
-            if zone != j.current_zone:
-                old_zone = j.current_zone
+            # Zone change checks — use saved prev zone (j.current_zone was updated above)
+            if zone != _prev_zone_for_detection:
+                old_zone = _prev_zone_for_detection
                 
                 # Create SpatialTransition object
                 trans = SpatialTransition(
@@ -646,7 +655,6 @@ class JourneyManager:
                 
                 # Evaluate EventRuleEngine using transition if validated
                 if TransitionValidator.validate(trans, self.db_path):
-                    j.current_zone = zone
                     j.zone_history.append(zone)
                     print(f"JOURNEY ZONE TRANSITION: Journey {j.journey_id} | Track {track_id} | {old_zone} -> {zone}")
                     trans.persist(self.db_path)
@@ -762,20 +770,31 @@ class JourneyManager:
                     continue
                 if force_all or offline_dur > 8.0:
                     if self.is_dark_lighting:
-                        # Business State Transitions for Swept/Lost Journey (Task 3)
+                        # Business State Transitions for Swept/Lost Journey
+                        # CRITICAL: tracker loss inside the restaurant is NOT a guest exit.
+                        # Only fire EXITED business event if last known zone was an exit zone.
+                        EXIT_ZONES = {"Exit", "OUTSIDE", "Entrance"}
+                        last_zone = getattr(j, "current_zone", j.entry_gate)
+                        was_at_exit = last_zone in EXIT_ZONES
+                        
                         if j.state == "WAITING":
                             wait_dur = (j.last_active_time - j.waiting_started).total_seconds() if j.waiting_started else 0.0
                             j.total_waiting_seconds += wait_dur
                             j.waiting_visits_count += 1
                             j.waiting_duration = j.total_waiting_seconds
-                            self.log_business_event(frame_id, j.last_active_time, "WAITING_END", j.journey_id, j.active_tracker_ids[-1], destination_zone="OUTSIDE", waiting_seconds=wait_dur)
+                            self.log_business_event(frame_id, j.last_active_time, "WAITING_END", j.journey_id, j.active_tracker_ids[-1], destination_zone="OUTSIDE" if was_at_exit else last_zone, waiting_seconds=wait_dur)
                         
                         if j.state != "EXITED":
                             j.update_state("EXITED", j.last_active_time, frame_id)
                             j.status = "exited"
                             j.exit_frame = frame_id
                             j.exit_time = j.last_active_time
-                            self.log_business_event(frame_id, j.last_active_time, "EXITED", j.journey_id, j.active_tracker_ids[-1])
+                            if was_at_exit:
+                                # Physical exit through doorway — count it
+                                self.log_business_event(frame_id, j.last_active_time, "EXITED", j.journey_id, j.active_tracker_ids[-1])
+                            else:
+                                # Tracker lost inside restaurant — record as internal loss, not exit
+                                self.log_business_event(frame_id, j.last_active_time, "TRACK_LOST_INSIDE", j.journey_id, j.active_tracker_ids[-1])
                     else:
                         j.status = "exited"
                         j.exit_time = j.last_active_time

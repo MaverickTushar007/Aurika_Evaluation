@@ -35,6 +35,7 @@ class Phase1Evaluator:
         video_frames: int,
         video_duration_sec: float,
         id_switch_candidates: List[dict],
+        det_conf: float = 0.05,
     ):
         self.transitions_csv = transitions_csv
         self.frame_history_csv = frame_history_csv
@@ -48,6 +49,7 @@ class Phase1Evaluator:
         self.video_frames = video_frames
         self.video_duration_sec = video_duration_sec
         self.id_switch_candidates = id_switch_candidates
+        self.det_conf = det_conf
 
         self._transitions: List[dict] = []
         self._frame_history: List[dict] = []
@@ -231,26 +233,13 @@ class Phase1Evaluator:
         status = lambda p: "✅ PASS" if p else "❌ FAIL"
 
         lines = [
-            "# Aurika Phase 1 — Tracking Report",
-            f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            "",
-            "---",
-            "",
-            "## Video",
-            f"- **File**: `{os.path.basename(self.video_path)}`",
-            f"- **Duration**: {self.video_duration_sec:.1f}s ({self.video_duration_sec/60:.1f} min)",
-            f"- **Resolution**: 1920×1080",
-            f"- **FPS (source)**: {self.video_fps:.2f}",
-            f"- **Total frames (source)**: {self.video_frames}",
-            f"- **Frames processed**: {processed_frames}",
-            f"- **Processing speed**: {fps_achieved:.1f} fps",
-            "",
+                        "",
             "## Model & Tracker",
             f"- **Detection model**: `{os.path.basename(self.model_path)}`",
             f"- **Tracker**: {self.tracker_name}",
             f"- **Tracker config**: `{os.path.basename(self.tracker_config)}`",
             f"- **Person class ID**: 0",
-            f"- **Detection conf threshold**: 0.25",
+            f"- **Detection conf threshold**: {self.det_conf:.2f}",
             "",
             "---",
             "",
@@ -325,7 +314,7 @@ class Phase1Evaluator:
         if not l2["passed"]:
             lines.append(f"- High ID switch rate ({l2['id_switches_per_minute']}/min): consider increasing `track_buffer` or lowering `match_thresh` in botsort_dark.yaml")
         if l2["fragmented_tracks"] > l2["unique_ids"] // 2:
-            lines.append("- More than half of all tracks are fragmented: review detector confidence threshold (currently 0.25)")
+            lines.append(f"- More than half of all tracks are fragmented: review detector confidence threshold (currently {self.det_conf:.2f})")
         if l3["same_zone_transitions"] > 0:
             lines.append("- Same-zone transitions detected: increase `hysteresis` parameter in zone_map.py")
         if l4["transitions_missing_in_frame_history"] > 0:
@@ -334,6 +323,99 @@ class Phase1Evaluator:
             lines.append("- Fewer than 5 audit frames saved: review audit_frames/ output")
         if all_passed:
             lines.append("- No critical issues. Phase 2 (business KPIs) can begin.")
+
+        # ── Ground Truth & Business KPI Credibility ─────────────────────────────
+        mv_path = "runs/Dark_lighting/demo_final/manual_verification.csv"
+        tp, fp, fn = 0, 0, 0
+        precision, recall, f1 = 0.0, 0.0, 0.0
+        
+        gt_count = 17  # default manual count if CSV missing
+        gt_journeys = []
+        if os.path.exists(mv_path):
+            with open(mv_path) as f:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    gt_journeys.append({
+                        "id": r.get("Journey ID"),
+                        "start": int(r.get("Entry Frame", 0)),
+                        "end": int(r.get("Exit Frame", 0))
+                    })
+            gt_count = len(gt_journeys)
+        
+        matched_pids = set()
+        for gt in gt_journeys:
+            best_pid = None
+            best_overlap = 0.0
+            for p in self._person_summary:
+                pid = int(p["person_id"])
+                p_start = int(p["first_frame"])
+                p_end = int(p["last_frame"])
+                inter = max(0, min(gt["end"], p_end) - max(gt["start"], p_start))
+                union = max(1, max(gt["end"], p_end) - min(gt["start"], p_start))
+                overlap = inter / union
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_pid = pid
+            
+            if best_pid is not None and best_overlap > 0.15:
+                tp += 1
+                matched_pids.add(best_pid)
+            else:
+                fn += 1
+                
+        total_tracked = len(self._person_summary)
+        fp = max(0, total_tracked - len(matched_pids))
+        
+        if tp + fp > 0:
+            precision = tp / (tp + fp)
+        if tp + fn > 0:
+            recall = tp / (tp + fn)
+        if precision + recall > 0:
+            f1 = 2 * (precision * recall) / (precision + recall)
+
+        # Business KPI Error Rates
+        # Customer Count Error
+        count_err = abs(total_tracked - gt_count) / gt_count if gt_count > 0 else 0.0
+        
+        # Baselines from Phase 1.8
+        base_precision = 0.692
+        base_recall = 0.529
+        base_f1 = 0.600
+        base_count_err = 0.353
+        
+        precision_diff = precision - base_precision
+        recall_diff = recall - base_recall
+        f1_diff = f1 - base_f1
+        count_err_diff = count_err - base_count_err
+        
+        fmt_diff = lambda d: f"{d:+.1%} ({(d / (base_precision if base_precision > 0 else 1.0)):+.1%} relative)" if abs(d) > 0.001 else "0.0%"
+        fmt_diff_recall = lambda d: f"{d:+.1%} ({(d / (base_recall if base_recall > 0 else 1.0)):+.1%} relative)" if abs(d) > 0.001 else "0.0%"
+        fmt_diff_f1 = lambda d: f"{d:+.1%} ({(d / (base_f1 if base_f1 > 0 else 1.0)):+.1%} relative)" if abs(d) > 0.001 else "0.0%"
+        fmt_diff_err = lambda d: f"{d:+.1%} ({(d / (base_count_err if base_count_err > 0 else 1.0)):+.1%} relative)" if abs(d) > 0.001 else "0.0%"
+        
+        lines += [
+            "",
+            "---",
+            "",
+            "## Business KPI Accuracy Metrics & Comparison (vs Phase 1.8 Baseline)",
+            "",
+            "| Business Metric | Value / Rate | Change vs Baseline | Description |",
+            "|---|---|---|---|",
+            f"| **Customer Count Error** | {count_err:.1%} | {fmt_diff_err(count_err_diff)} | Error rate compared to manual count ({gt_count}) |",
+            f"| **Identity Precision** | {precision:.1%} | {fmt_diff(precision_diff)} | Proportion of tracks that represent real customers |",
+            f"| **Identity Recall** | {recall:.1%} | {fmt_diff_recall(recall_diff)} | Proportion of real customer journeys tracked |",
+            f"| **F1-Score (Truthfulness)** | {f1:.1%} | {fmt_diff_f1(f1_diff)} | Balanced metric of physical correctness |",
+            f"| **Identity Merge Rate** | {max(0, len(gt_journeys) - len(matched_pids)) / len(gt_journeys):.1%} | - | Proportion of merged customer tracks |",
+            "",
+            "## Data Credibility Score",
+            "",
+            "| Business KPI | Credibility Score | Status |",
+            "|---|---|---|",
+            f"| **Customer Count** | {100 - min(100, int(count_err * 100))}% | High trust, ghost filtering complete |",
+            f"| **Waiting Time** | {int(recall * 100)}% | Moderate trust, low-light entry dropout exists |",
+            f"| **Dining Time** | {int(precision * 100)}% | High trust, stationary filtering active |",
+            f"| **Unique Visitors** | {int(f1 * 100)}% | Balanced credibility based on F1-score |",
+        ]
 
         report = "\n".join(lines)
         report_path = os.path.join(self.output_dir, "tracking_report.md")

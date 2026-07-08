@@ -35,6 +35,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# Apply tracker candidate recovery monkey-patching
+import phase1.tracker_recovery
+from phase1.tracker_recovery import save_candidate_rejections
+
 from phase1.tracker import PersonTracker
 from phase1.zone_map import ZoneMap, OUTSIDE
 from phase1.csv_writer import TransitionWriter, FrameHistoryWriter, PersonSummaryWriter
@@ -117,10 +121,12 @@ def clean_ghost_tracks(output_dir: str):
         entered_operational = any(z in ["WAITING", "DINING", "RECEPTION"] for z in zones_list)
         
         if not entered_operational:
-            if std_total < 3.0:
+            if std_total < 4.0:
                 ghost_ids.add(pid)
             elif total_frames[pid] <= 3:
                 ghost_ids.add(pid)
+        elif std_total < 4.0:
+            ghost_ids.add(pid)
 
     if not ghost_ids:
         print("[Phase1] No ghost tracks detected for filtering.")
@@ -240,10 +246,21 @@ def run(
     current_zones: dict = {}   # {person_id: confirmed_zone}
     known_persons: set = set() # persons seen at least once
     
-    # State tracking for occlusion and camera exit logic
-    OUTSIDE_CAMERA = "Outside camera"
-    OUTSIDE_OPERATIONAL = "Outside operational floor"
-    OCCLUDED = "Occluded"
+    # Orthogonal states
+    OUTSIDE = "OUTSIDE"
+    VISIBLE = "VISIBLE"
+    OCCLUDED = "OCCLUDED"
+    ACTIVE = "ACTIVE"
+    LOST = "LOST"
+    CAMERA_EXIT = "CAMERA_EXIT"
+    
+    visibility_states: Dict[int, str] = {}
+    tracking_states: Dict[int, str] = {}
+    
+    # Running statistics for track quality score
+    observed_frames_track: Dict[int, int] = {}
+    total_frames_track: Dict[int, int] = {}
+    sum_conf_track: Dict[int, float] = {}
     
     last_seen_frame: Dict[int, int] = {}
     last_seen_coords: Dict[int, Tuple[float, float]] = {}
@@ -292,44 +309,60 @@ def run(
             bc = person.bottom_center
             raw_zone = zone_map.get_zone_for_point(bc)
 
+            # Update running statistics for track quality
+            total_frames_track[pid] = total_frames_track.get(pid, 0) + 1
+            observed_frames_track[pid] = observed_frames_track.get(pid, 0) + 1
+            sum_conf_track[pid] = sum_conf_track.get(pid, 0.0) + person.det_conf
+            
+            obs_ratio = observed_frames_track[pid] / total_frames_track[pid]
+            avg_conf = sum_conf_track[pid] / observed_frames_track[pid]
+            q_score = 0.6 * obs_ratio + 0.4 * avg_conf
+            track_quality = "HIGH" if q_score >= 0.5 else ("MEDIUM" if q_score >= 0.25 else "LOW")
+
             if pid not in known_persons:
-                # First appearance — transition from Outside camera
+                # First appearance — transition from OUTSIDE
                 zone = zone_map.initialize_person(pid, bc)
                 current_zones[pid] = zone
                 known_persons.add(pid)
+                visibility_states[pid] = VISIBLE
+                tracking_states[pid] = ACTIVE
                 
-                trans_writer.write(
-                    person_id=pid,
-                    frame=frame_idx,
-                    timestamp_sec=timestamp_sec,
-                    previous_zone=OUTSIDE_CAMERA,
-                    current_zone=zone,
-                    bbox=person.bbox,
-                    tracker_conf=person.track_conf,
-                    det_conf=person.det_conf,
-                )
-                ps_writer.record_transition(pid, frame_idx, OUTSIDE_CAMERA, zone)
-            else:
-                # Existing person — check if they were occluded
-                prev_zone = current_zones.get(pid, OUTSIDE_CAMERA)
-                if prev_zone == OCCLUDED:
-                    # Reappeared from occlusion — direct transition
-                    zone_map._confirmed_zone[pid] = raw_zone
-                    zone_map._pending.pop(pid, None)
-                    confirmed_zone = raw_zone
-                    
+                if zone != OUTSIDE:
                     trans_writer.write(
                         person_id=pid,
                         frame=frame_idx,
                         timestamp_sec=timestamp_sec,
-                        previous_zone=OCCLUDED,
-                        current_zone=confirmed_zone,
+                        previous_zone=OUTSIDE,
+                        current_zone=zone,
                         bbox=person.bbox,
                         tracker_conf=person.track_conf,
                         det_conf=person.det_conf,
                     )
-                    ps_writer.record_transition(pid, frame_idx, OCCLUDED, confirmed_zone)
-                    current_zones[pid] = confirmed_zone
+                    ps_writer.record_transition(pid, frame_idx, OUTSIDE, zone)
+            else:
+                # Existing person — check if they were occluded
+                was_occluded = (visibility_states.get(pid, VISIBLE) == OCCLUDED)
+                if was_occluded:
+                    # Reappeared from occlusion — direct transition
+                    visibility_states[pid] = VISIBLE
+                    tracking_states[pid] = ACTIVE
+                    zone_map._confirmed_zone[pid] = raw_zone
+                    zone_map._pending.pop(pid, None)
+                    
+                    prev_zone = current_zones.get(pid, OUTSIDE)
+                    if prev_zone != raw_zone:
+                        trans_writer.write(
+                            person_id=pid,
+                            frame=frame_idx,
+                            timestamp_sec=timestamp_sec,
+                            previous_zone=prev_zone,
+                            current_zone=raw_zone,
+                            bbox=person.bbox,
+                            tracker_conf=person.track_conf,
+                            det_conf=person.det_conf,
+                        )
+                        ps_writer.record_transition(pid, frame_idx, prev_zone, raw_zone)
+                    current_zones[pid] = raw_zone
                 else:
                     confirmed_zone, transition_from = zone_map.assign(pid, bc)
                     if transition_from is not None:
@@ -359,64 +392,89 @@ def run(
                 current_zone=zone,
                 bbox=person.bbox,
                 bottom_center=bc,
-                is_visible=True,
+                visibility=VISIBLE,
+                tracking_state=ACTIVE,
+                observation_type="OBSERVED",
+                is_detected=1,
+                detection_confidence=person.det_conf,
+                association_cost=person.association_cost,
+                frames_since_detection=0,
+                track_quality=track_quality,
             )
             ps_writer.record_frame(pid, frame_idx, zone)
 
         # ── Occlusion & Exit check ────────────────────────────────────────────
         for pid in list(known_persons):
             if pid not in active_ids:
-                prev_zone = current_zones.get(pid, OUTSIDE_CAMERA)
-                if prev_zone not in [OCCLUDED, OUTSIDE_CAMERA]:
-                    trans_writer.write(
-                        person_id=pid,
-                        frame=frame_idx,
-                        timestamp_sec=timestamp_sec,
-                        previous_zone=prev_zone,
-                        current_zone=OCCLUDED,
-                        bbox=last_seen_bbox[pid],
-                        tracker_conf=0.0,
-                        det_conf=0.0,
-                    )
-                    ps_writer.record_transition(pid, frame_idx, prev_zone, OCCLUDED)
-                    current_zones[pid] = OCCLUDED
-                    zone_map._confirmed_zone[pid] = OCCLUDED
+                prev_vis = visibility_states.get(pid, VISIBLE)
+                if prev_vis == VISIBLE:
+                    # Just lost detection — transition visibility to OCCLUDED
+                    visibility_states[pid] = OCCLUDED
+                    tracking_states[pid] = LOST
 
-                if current_zones.get(pid) == OCCLUDED:
-                    if frame_idx - last_seen_frame[pid] <= 90:
+                if visibility_states.get(pid) == OCCLUDED:
+                    # Update running statistics for track quality
+                    total_frames_track[pid] = total_frames_track.get(pid, 0) + 1
+                    obs_ratio = observed_frames_track.get(pid, 0) / total_frames_track[pid]
+                    avg_conf = sum_conf_track.get(pid, 0.0) / max(1, observed_frames_track.get(pid, 0))
+                    q_score = 0.6 * obs_ratio + 0.4 * avg_conf
+                    track_quality = "HIGH" if q_score >= 0.5 else ("MEDIUM" if q_score >= 0.25 else "LOW")
+                    fsd = frame_idx - last_seen_frame[pid]
+
+                    # Check if still inside occlusion buffer (120 frames)
+                    if fsd <= 120:
+                        zone = current_zones.get(pid, OUTSIDE)
                         fh_writer.write(
                             frame=frame_idx,
                             timestamp_sec=timestamp_sec,
                             person_id=pid,
-                            current_zone=OCCLUDED,
+                            current_zone=zone,
                             bbox=last_seen_bbox[pid],
                             bottom_center=last_seen_coords[pid],
-                            is_visible=False,
+                            visibility=OCCLUDED,
+                            tracking_state=LOST,
+                            observation_type="PREDICTED",
+                            is_detected=0,
+                            detection_confidence=0.0,
+                            association_cost=0.0,
+                            frames_since_detection=fsd,
+                            track_quality=track_quality,
                         )
-                        ps_writer.record_frame(pid, frame_idx, OCCLUDED)
-                    else:
-                        trans_writer.write(
-                            person_id=pid,
-                            frame=frame_idx,
-                            timestamp_sec=timestamp_sec,
-                            previous_zone=OCCLUDED,
-                            current_zone=OUTSIDE_CAMERA,
-                            bbox=last_seen_bbox[pid],
-                            tracker_conf=0.0,
-                            det_conf=0.0,
-                        )
-                        ps_writer.record_transition(pid, frame_idx, OCCLUDED, OUTSIDE_CAMERA)
+                        ps_writer.record_frame(pid, frame_idx, zone)
+                    elif tracking_states.get(pid) != CAMERA_EXIT:
+                        # Exceeded track buffer — transition physical zone to OUTSIDE
+                        prev_zone = current_zones.get(pid, OUTSIDE)
+                        if prev_zone != OUTSIDE:
+                            trans_writer.write(
+                                person_id=pid,
+                                frame=frame_idx,
+                                timestamp_sec=timestamp_sec,
+                                previous_zone=prev_zone,
+                                current_zone=OUTSIDE,
+                                bbox=last_seen_bbox[pid],
+                                tracker_conf=0.0,
+                                det_conf=0.0,
+                            )
+                            ps_writer.record_transition(pid, frame_idx, prev_zone, OUTSIDE)
+                        
                         fh_writer.write(
                             frame=frame_idx,
                             timestamp_sec=timestamp_sec,
                             person_id=pid,
-                            current_zone=OUTSIDE_CAMERA,
+                            current_zone=OUTSIDE,
                             bbox=last_seen_bbox[pid],
                             bottom_center=last_seen_coords[pid],
-                            is_visible=False,
+                            visibility=OCCLUDED,
+                            tracking_state=CAMERA_EXIT,
+                            observation_type="PREDICTED",
+                            is_detected=0,
+                            detection_confidence=0.0,
+                            association_cost=0.0,
+                            frames_since_detection=fsd,
+                            track_quality=track_quality,
                         )
-                        current_zones[pid] = OUTSIDE_CAMERA
-                        zone_map._confirmed_zone[pid] = OUTSIDE_CAMERA
+                        current_zones[pid] = OUTSIDE
+                        tracking_states[pid] = CAMERA_EXIT
                         ps_writer.mark_exited(pid)
 
         # ── Render overlay ────────────────────────────────────────────────────
@@ -468,31 +526,49 @@ def run(
         cv2.imwrite(val_end_path, last_rendered_frame)
         print(f"[Phase1] Saved validation_frame_end.jpg to {val_end_path}")
 
-    # ── Final Transitions to Outside camera ───────────────────────────────────
+    # ── Final Transitions to OUTSIDE ──────────────────────────────────────────
     for pid in list(known_persons):
-        final_zone = current_zones.get(pid, OUTSIDE_CAMERA)
-        if final_zone not in [OUTSIDE_CAMERA]:
-            trans_writer.write(
-                person_id=pid,
-                frame=frame_idx,
-                timestamp_sec=frame_idx / src_fps,
-                previous_zone=final_zone,
-                current_zone=OUTSIDE_CAMERA,
-                bbox=last_seen_bbox.get(pid, (0, 0, 0, 0)),
-                tracker_conf=0.0,
-                det_conf=0.0,
-            )
-            ps_writer.record_transition(pid, frame_idx, final_zone, OUTSIDE_CAMERA)
+        final_zone = current_zones.get(pid, OUTSIDE)
+        final_tracking = tracking_states.get(pid, ACTIVE)
+        if final_zone != OUTSIDE or final_tracking != CAMERA_EXIT:
+            if final_zone != OUTSIDE:
+                trans_writer.write(
+                    person_id=pid,
+                    frame=frame_idx,
+                    timestamp_sec=frame_idx / src_fps,
+                    previous_zone=final_zone,
+                    current_zone=OUTSIDE,
+                    bbox=last_seen_bbox.get(pid, (0, 0, 0, 0)),
+                    tracker_conf=0.0,
+                    det_conf=0.0,
+                )
+                ps_writer.record_transition(pid, frame_idx, final_zone, OUTSIDE)
+            
+            total_frames_track[pid] = total_frames_track.get(pid, 0) + 1
+            obs_ratio = observed_frames_track.get(pid, 0) / total_frames_track[pid]
+            avg_conf = sum_conf_track.get(pid, 0.0) / max(1, observed_frames_track.get(pid, 0))
+            q_score = 0.6 * obs_ratio + 0.4 * avg_conf
+            track_quality = "HIGH" if q_score >= 0.5 else ("MEDIUM" if q_score >= 0.25 else "LOW")
+            fsd = frame_idx - last_seen_frame.get(pid, frame_idx)
+
             fh_writer.write(
                 frame=frame_idx,
                 timestamp_sec=frame_idx / src_fps,
                 person_id=pid,
-                current_zone=OUTSIDE_CAMERA,
+                current_zone=OUTSIDE,
                 bbox=last_seen_bbox.get(pid, (0, 0, 0, 0)),
                 bottom_center=last_seen_coords.get(pid, (0.0, 0.0)),
-                is_visible=False,
+                visibility=OCCLUDED,
+                tracking_state=CAMERA_EXIT,
+                observation_type="PREDICTED",
+                is_detected=0,
+                detection_confidence=0.0,
+                association_cost=0.0,
+                frames_since_detection=fsd,
+                track_quality=track_quality,
             )
-            current_zones[pid] = OUTSIDE_CAMERA
+            current_zones[pid] = OUTSIDE
+            tracking_states[pid] = CAMERA_EXIT
             ps_writer.mark_exited(pid)
 
     # ── Cleanup ────────────────────────────────────────────────────────────────
@@ -501,6 +577,9 @@ def run(
     trans_writer.close()
     fh_writer.close()
     ps_writer.flush()   # write person_summary.csv
+
+    # ── Save Candidate Rejections Log ─────────────────────────────────────────
+    # save_candidate_rejections(output_dir)
 
     # ── Apply Ghost Track Filtering ───────────────────────────────────────────
     clean_ghost_tracks(output_dir)
@@ -527,6 +606,7 @@ def run(
         video_frames=total_frames,
         video_duration_sec=duration_sec,
         id_switch_candidates=tracker.id_switch_candidates,
+        det_conf=det_conf,
     )
     report_path = evaluator.generate_report(elapsed_total, processed)
     print(f"\n[Phase1] Report written to: {report_path}")
